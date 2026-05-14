@@ -1,11 +1,12 @@
 """Generate N synthetic tutoring trajectories and write to JSONL.
 
-Run with --target 5000 first to validate, then scale to --target 50000.
+Sampling (DB) runs sequentially; oracle LLM calls run in a ThreadPoolExecutor.
 """
 
 import json
 import random
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import typer
 
@@ -42,6 +43,47 @@ TASK_TEMPLATES = {
 }
 
 
+def _sample_batch(conn, populated_topics, batch_size, base_idx):
+    """Pre-sample inputs for `batch_size` trajectories. DB-bound, fast (~10ms/trajectory)."""
+    batch = []
+    for i in range(batch_size):
+        topic, _n = random.choice(populated_topics)
+        task_type = random.choice(list(TaskType))
+        template = random.choice(TASK_TEMPLATES[task_type])
+        task_text = template.format(title=topic.title)
+        pool = sample_candidate_pool(conn, target_topic=topic.id, pool_size=15)
+        if not pool:
+            continue
+        state = sample_student_state(
+            conn,
+            student_id=f"synthetic-{uuid.uuid4().hex[:8]}",
+            target_concepts=[topic.id],
+        )
+        batch.append({
+            "idx": base_idx + i,
+            "topic": topic,
+            "task_type": task_type,
+            "task_text": task_text,
+            "pool": pool,
+            "state": state,
+            "budget": random.choice([2000, 3000, 4000, 6000]),
+        })
+    return batch
+
+
+def _build_one(item, llm):
+    traj = build_trajectory(
+        traj_id=f"traj-{item['idx']:06d}",
+        student_state=item["state"],
+        task_type=item["task_type"],
+        task_text=item["task_text"],
+        budget=item["budget"],
+        candidate_pool=item["pool"],
+        oracle_llm=llm,
+    )
+    return traj
+
+
 @app.command()
 def main(
     target: int = typer.Option(5000, "--target"),
@@ -49,6 +91,8 @@ def main(
     config: Path = typer.Option(Path("config/topics.yaml"), "--config"),
     oracle_model: str = typer.Option("claude-sonnet-4-6", "--oracle-model"),
     seed: int = typer.Option(42, "--seed"),
+    workers: int = typer.Option(16, "--workers", help="Parallel oracle calls"),
+    batch_size: int = typer.Option(64, "--batch-size", help="Pre-sample batch size"),
 ):
     random.seed(seed)
     settings = get_settings()
@@ -70,45 +114,40 @@ def main(
         typer.echo("No populated topics in DB. Run Plan 2 first.", err=True)
         raise typer.Exit(2)
 
-    typer.echo(f"Generating {target} trajectories across {len(populated_topics)} populated topics...")
+    typer.echo(f"Generating {target} trajectories across {len(populated_topics)} populated topics with {workers} workers...")
 
     written = 0
+    failed = 0
     try:
         with out.open("w") as f:
-            for i in range(target):
-                topic, _n = random.choice(populated_topics)
-                task_type = random.choice(list(TaskType))
-                template = random.choice(TASK_TEMPLATES[task_type])
-                task_text = template.format(title=topic.title)
-                pool = sample_candidate_pool(conn, target_topic=topic.id, pool_size=15)
-                if not pool:
-                    continue
-                state = sample_student_state(
-                    conn,
-                    student_id=f"synthetic-{uuid.uuid4().hex[:8]}",
-                    target_concepts=[topic.id],
-                )
-                try:
-                    traj = build_trajectory(
-                        traj_id=f"traj-{written:06d}",
-                        student_state=state,
-                        task_type=task_type,
-                        task_text=task_text,
-                        budget=random.choice([2000, 3000, 4000, 6000]),
-                        candidate_pool=pool,
-                        oracle_llm=llm,
-                    )
-                    f.write(json.dumps(traj.model_dump(), default=str) + "\n")
-                    f.flush()
-                    written += 1
-                    if written % 50 == 0:
-                        typer.echo(f"  wrote {written}/{target}")
-                except Exception as e:
-                    typer.echo(f"  [warn] trajectory {i} failed: {e}", err=True)
+            base_idx = 0
+            while written < target:
+                remaining = target - written
+                this_batch = min(batch_size, remaining)
+                batch = _sample_batch(conn, populated_topics, this_batch, base_idx)
+                if not batch:
+                    break
+                base_idx += this_batch
+
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    futures = {ex.submit(_build_one, item, llm): item for item in batch}
+                    for fut in as_completed(futures):
+                        item = futures[fut]
+                        try:
+                            traj = fut.result()
+                            f.write(json.dumps(traj.model_dump(), default=str) + "\n")
+                            f.flush()
+                            written += 1
+                            if written % 50 == 0:
+                                typer.echo(f"  wrote {written}/{target}")
+                        except Exception as e:
+                            failed += 1
+                            if failed <= 5:
+                                typer.echo(f"  [warn] traj failed: {e}", err=True)
     finally:
         conn.close()
 
-    typer.echo(f"\nDone. {written} trajectories written to {out}")
+    typer.echo(f"\nDone. {written} trajectories written to {out}. {failed} failures.")
 
 
 if __name__ == "__main__":
