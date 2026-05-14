@@ -1,0 +1,161 @@
+version: 1
+description: "Learning Memory OS curriculum — 20 topics across 5 areas"
+
+areas:
+  A: "Model fundamentals (CS336 L1-L4)"
+  B: "Training systems (CS336 L5-L8, L11)"
+  C: "Inference infrastructure (CS349D + CS336 L10)"
+  D: "Data & alignment (CS336 L13-L17)"
+  E: "Agent systems & frontier framing (CS153 + project recursion)"
+
+topics:
+  - id: tokenization
+    area: A
+    title: "Tokenization (BPE, byte-level)"
+    sources:
+      - "data/seed_topics/tokenization/source.md"
+      - "data/curriculum/cs336_l01_overview.md"
+    prerequisites: []
+
+  - id: transformer_architecture
+    area: A
+    title: "Transformer architecture & hyperparameters"
+    sources:
+      - "data/curriculum/cs336_l03_architecture.md"
+    prerequisites: [tokenization]
+
+  - id: attention_moe
+    area: A
+    title: "Attention variants & MoE"
+    sources:
+      - "data/curriculum/cs336_l04_attention_moe.md"
+    prerequisites: [transformer_architecture]
+
+  - id: resource_accounting
+    area: A
+    title: "Resource accounting (FLOPs, memory, arithmetic intensity)"
+    sources:
+      - "data/curriculum/cs336_l02_resource_accounting.md"
+    prerequisites: [transformer_architecture]
+
+  - id: gpu_kernels
+    area: B
+    title: "GPU/TPU hardware & kernels (Triton, FlashAttention2)"
+    sources:
+      - "data/curriculum/cs336_l05_gpus_tpus.md"
+      - "data/curriculum/cs336_l06_kernels.md"
+    prerequisites: [resource_accounting]
+
+  - id: data_parallelism
+    area: B
+    title: "Data parallelism (DDP)"
+    sources:
+      - "data/seed_topics/data_parallelism/source.md"
+      - "data/curriculum/cs336_l07_parallelism.md"
+    prerequisites: [resource_accounting]
+
+  - id: sharded_training
+    area: B
+    title: "Sharded training (FSDP, ZeRO-1/2/3)"
+    sources:
+      - "data/curriculum/cs336_l08_parallelism.md"
+    prerequisites: [data_parallelism]
+
+  - id: model_parallelism
+    area: B
+    title: "Model parallelism (tensor + pipeline)"
+    sources:
+      - "data/curriculum/cs336_l08_parallelism.md"
+    prerequisites: [sharded_training]
+
+  - id: scaling_laws
+    area: B
+    title: "Scaling laws"
+    sources:
+      - "data/curriculum/cs336_l09_scaling.md"
+      - "data/curriculum/cs336_l11_scaling.md"
+    prerequisites: [resource_accounting]
+
+  - id: kv_cache
+    area: C
+    title: "KV cache & PagedAttention"
+    sources:
+      - "data/seed_topics/kv_cache/source.md"
+      - "data/seed_topics/cs336_l10_inference/source.md"
+    prerequisites: [attention_moe]
+
+  - id: quantization
+    area: C
+    title: "Quantization (int8/int4, GPTQ/AWQ)"
+    sources:
+      - "data/seed_topics/cs336_l10_inference/source.md"
+      - "data/curriculum/cs349d_quantization.md"
+    prerequisites: [resource_accounting]
+
+  - id: speculative_decoding
+    area: C
+    title: "Speculative decoding"
+    sources:
+      - "data/seed_topics/cs336_l10_inference/source.md"
+      - "data/curriculum/cs349d_speculative.md"
+    prerequisites: [kv_cache]
+
+  - id: continuous_batching
+    area: C
+    title: "Continuous batching & request scheduling"
+    sources:
+      - "data/seed_topics/cs336_l10_inference/source.md"
+      - "data/curriculum/cs349d_batching.md"
+    prerequisites: [kv_cache]
+
+  - id: prefill_decode_disagg
+    area: C
+    title: "Prefill-decode disaggregation & hierarchical caching"
+    sources:
+      - "data/curriculum/cs349d_disaggregation.md"
+    prerequisites: [continuous_batching]
+
+  - id: pretraining_data
+    area: D
+    title: "Pretraining data (collection, dedup, filtering)"
+    sources:
+      - "data/curriculum/cs336_l13_data.md"
+      - "data/curriculum/cs336_l14_data.md"
+    prerequisites: [tokenization]
+
+  - id: sft_rlhf_dpo
+    area: D
+    title: "SFT + RLHF / DPO"
+    sources:
+      - "data/curriculum/cs336_l15_alignment.md"
+    prerequisites: [pretraining_data]
+
+  - id: rl_systems
+    area: D
+    title: "RL systems for reasoning"
+    sources:
+      - "data/curriculum/cs336_l16_rl.md"
+      - "data/curriculum/cs336_l17_rl_systems.md"
+    prerequisites: [sft_rlhf_dpo]
+
+  - id: agent_memory
+    area: E
+    title: "Agent memory architectures"
+    sources:
+      - "data/seed_topics/agent_memory/source.md"
+      - "data/curriculum/cs153_agents_framing.md"
+    prerequisites: []
+
+  - id: context_selection
+    area: E
+    title: "Context selection under budgets"
+    sources:
+      - "data/curriculum/agents_context_selection.md"
+    prerequisites: [agent_memory]
+
+  - id: multi_agent_orchestration
+    area: E
+    title: "Multi-agent orchestration & long-horizon execution"
+    sources:
+      - "data/curriculum/agents_orchestration.md"
+    prerequisites: [context_selection]
