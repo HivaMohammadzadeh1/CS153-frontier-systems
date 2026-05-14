@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from ..schemas.memory import MemoryItem
 from .scoring import ScoringContext, score_item, ItemScore
 from .pack import pack_under_budget

@@ -1,6 +1,5 @@
 """Ask the tutor a question. Single-turn for now; loop comes later."""
 
-from pathlib import Path
 import typer
 
 from learning_memory_os.config import get_settings

@@ -1,4 +1,3 @@
-import os
 from learning_memory_os.config import Settings
 
 

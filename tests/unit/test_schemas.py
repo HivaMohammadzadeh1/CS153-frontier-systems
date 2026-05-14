@@ -1,14 +1,11 @@
 from learning_memory_os.schemas.artifacts import (
     Concept,
     Misconception,
-    Example,
-    Exercise,
     ArtifactType,
 )
 from learning_memory_os.schemas.memory import (
     MemoryItem,
     MasteryEntry,
-    EpisodicEvent,
 )
 
 
