@@ -1,5 +1,4 @@
 from pathlib import Path
-import yaml
 from learning_memory_os.ingestion.topic_loader import (
     load_topics,
     Topic,
