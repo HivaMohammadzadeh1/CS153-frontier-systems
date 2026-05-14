@@ -1,0 +1,167 @@
+
+=== A/tokenization (Tokenization (BPE, byte-level)) — total 4
+  concept: 3
+  misconception: 1
+  ~ sample [misconception] The tokenizer is interchangeable across models.
+    Misconception: The tokenizer is interchangeable across models. Correction: Pretraining data and tokenizer are coupled; swapping the tokenizer usually requires retraining embeddings.
+  ~ sample [concept] Tokenization
+    Tokenization The process of splitting raw text into integer ids the model can consume. Tokenization converts text into a sequence of integer ids by mapping substrings to entries in a vocabulary. The c...
+
+=== A/transformer_architecture (Transformer architecture & hyperparameters) — total 0
+  (no artifacts; topic missing or extraction failed)
+
+=== A/attention_moe (Attention variants & MoE) — total 0
+  (no artifacts; topic missing or extraction failed)
+
+=== A/resource_accounting (Resource accounting (FLOPs, memory, arithmetic intensity)) — total 46
+  code_pattern: 6
+  concept: 14
+  example: 6
+  exercise: 4
+  misconception: 7
+  paper_claim: 9
+  ~ sample [exercise] Napkin Math: Training Time for a 70B Model
+    Exercise: Using the 6·N·P FLOP rule, estimate the wall-clock time to train a 70B-parameter model on 15T tokens using 1024 H100s. Assume bf16 throughput and a Model FLOPs Utilization of 0.5. State your...
+  ~ sample [concept] Matrix Multiplication FLOP Cost
+    Matrix Multiplication FLOP Cost Multiplying an m×n matrix by an n×p matrix costs 2·m·n·p FLOPs. For each of the m·p output entries, you do n multiplies and n adds, giving 2mnp FLOPs. For a linear mode...
+
+=== B/gpu_kernels (GPU/TPU hardware & kernels (Triton, FlashAttention2)) — total 38
+  code_pattern: 7
+  concept: 11
+  example: 5
+  exercise: 4
+  misconception: 7
+  paper_claim: 4
+  ~ sample [code_pattern] Triton elementwise kernel skeleton
+    Code pattern: Triton elementwise kernel skeleton Define a @triton.jit kernel taking input/output pointers and a BLOCK_SIZE: tl.constexpr. Inside: pid = tl.program_id(0); offs = pid * BLOCK_SIZE + tl.a...
+  ~ sample [misconception] If a GPU spec sheet says X TFLOPs, my kernel will achieve cl
+    Misconception: If a GPU spec sheet says X TFLOPs, my kernel will achieve close to X TFLOPs. Correction: Spec sheets are marketing peaks. Real performance depends on your library version, hardware spec...
+
+=== B/data_parallelism (Data parallelism (DDP)) — total 4
+  concept: 3
+  misconception: 1
+  ~ sample [concept] All-Reduce in Gradient Synchronization
+    All-Reduce in Gradient Synchronization A collective operation that aggregates gradients across workers so each replica ends up with the same averaged gradient. All-reduce is the synchronization primit...
+  ~ sample [misconception] DDP scales arbitrarily as you add more workers.
+    Misconception: DDP scales arbitrarily as you add more workers. Correction: Beyond modest worker counts, communication overhead from all-reduce and straggler effects cap throughput, so scaling is subli...
+
+=== B/sharded_training (Sharded training (FSDP, ZeRO-1/2/3)) — total 30
+  code_pattern: 3
+  concept: 10
+  example: 3
+  exercise: 3
+  misconception: 5
+  paper_claim: 6
+  ~ sample [paper_claim] H100 HBM memory bandwidth is approximately 3.9 TB/s, several
+    Claim: H100 HBM memory bandwidth is approximately 3.9 TB/s, several times faster than its NVLink bandwidth. Source: cs336_l08_parallelism.md Evidence: 'In comparison, memory bandwidth for HBM is 3.9 T...
+  ~ sample [paper_claim] all-reduce = reduce-scatter + all-gather
+    Claim: all-reduce = reduce-scatter + all-gather Source: cs336_l08_parallelism.md Evidence: Stated explicitly as a section heading ('All-reduce = reduce-scatter + all-gather') and reinforced by 'Indeed...
+
+=== B/model_parallelism (Model parallelism (tensor + pipeline)) — total 30
+  code_pattern: 3
+  concept: 11
+  example: 3
+  exercise: 3
+  misconception: 5
+  paper_claim: 5
+  ~ sample [concept] torch.distributed
+    torch.distributed PyTorch's distributed library providing a clean interface for collective operations and supporting multiple backends (gloo for CPU, nccl for GPU). It exposes primitives like all_gath...
+  ~ sample [misconception] Point-to-point send/recv is the natural way to program multi
+    Misconception: Point-to-point send/recv is the natural way to program multi-GPU systems. Correction: Collective operations are a better/faster abstraction than managing point-to-point communication yo...
+
+=== B/scaling_laws (Scaling laws) — total 0
+  (no artifacts; topic missing or extraction failed)
+
+=== C/kv_cache (KV cache & PagedAttention) — total 52
+  code_pattern: 1
+  concept: 18
+  example: 9
+  exercise: 5
+  misconception: 10
+  paper_claim: 9
+  ~ sample [misconception] The KV cache stores raw token ids from the prompt and genera
+    Misconception: The KV cache stores raw token ids from the prompt and generated output. Correction: The KV cache stores the projected key (K) and value (V) tensors per transformer layer and per attenti...
+  ~ sample [concept] PagedAttention
+    PagedAttention A KV cache management technique introduced in vLLM that stores the KV cache in fixed-size blocks managed similarly to operating system virtual memory pages. PagedAttention treats the KV...
+
+=== C/quantization (Quantization (int8/int4, GPTQ/AWQ)) — total 19
+  code_pattern: 2
+  concept: 5
+  example: 3
+  exercise: 2
+  misconception: 4
+  paper_claim: 3
+  ~ sample [example] Example: Quantization
+    Example for Quantization: Numeric formats and their byte costs on a modern accelerator: fp32 = 4 bytes (training), bf16 = 2 bytes (default for inference), fp8 e4m3 = 1 byte with range [-240, 240] on H...
+  ~ sample [code_pattern] Mixed-precision matmul with outlier extraction (LLM.int8()-style)
+    Code pattern: Mixed-precision matmul with outlier extraction (LLM.int8()-style) def llm_int8_matmul(X, W, outlier_cols, threshold=6.0):     # Split columns of X (and corresponding rows of W) into outl...
+
+=== C/speculative_decoding (Speculative decoding) — total 16
+  code_pattern: 1
+  concept: 3
+  example: 3
+  exercise: 2
+  misconception: 4
+  paper_claim: 3
+  ~ sample [example] Example: Lossless inference acceleration
+    Example for Lossless inference acceleration: Extensions of speculative decoding that retain the lossless guarantee: Medusa, where the draft generates multiple tokens in parallel (rather than autoregre...
+  ~ sample [paper_claim] Speculative decoding works because checking proposed tokens 
+    Claim: Speculative decoding works because checking proposed tokens is faster than generating them. Source: CS336 Lecture 10 (Inference) Evidence: The lecture frames the asymmetry as: prefill/verificat...
+
+=== C/continuous_batching (Continuous batching & request scheduling) — total 16
+  code_pattern: 2
+  concept: 4
+  example: 2
+  exercise: 2
+  misconception: 4
+  paper_claim: 2
+  ~ sample [code_pattern] Selective batching: concat for MLP, per-sequence for attention
+    Code pattern: Selective batching: concat for MLP, per-sequence for attention # Pseudocode for one Transformer-layer forward step under continuous batching # active: list of Sequence objects, each with...
+  ~ sample [misconception] Bigger batches always improve inference latency and throughp
+    Misconception: Bigger batches always improve inference latency and throughput. Correction: Larger batches improve throughput (more tokens/sec) but hurt per-user latency because each step waits on more...
+
+=== C/prefill_decode_disagg (Prefill-decode disaggregation & hierarchical caching) — total 0
+  (no artifacts; topic missing or extraction failed)
+
+=== D/pretraining_data (Pretraining data (collection, dedup, filtering)) — total 72
+  code_pattern: 8
+  concept: 27
+  example: 10
+  exercise: 5
+  misconception: 10
+  paper_claim: 12
+  ~ sample [concept] DSIR (Data Selection via Importance Resampling)
+    DSIR (Data Selection via Importance Resampling) A data selection method that resamples from a large proposal corpus D_q with probability proportional to p_T(x)/p_q(x), where both distributions are est...
+  ~ sample [concept] Dolma
+    Dolma AI2's open ~3T-token pretraining dataset combining curated sources (Reddit via Pushshift, PeS2o academic papers, C4, Gutenberg, Wikipedia) plus filtered Common Crawl. Common Crawl processing: fa...
+
+=== D/sft_rlhf_dpo (SFT + RLHF / DPO) — total 0
+  (no artifacts; topic missing or extraction failed)
+
+=== D/rl_systems (RL systems for reasoning) — total 29
+  code_pattern: 4
+  concept: 7
+  example: 3
+  exercise: 4
+  misconception: 6
+  paper_claim: 5
+  ~ sample [misconception] Adding a baseline b(s) biases the policy gradient.
+    Misconception: Adding a baseline b(s) biases the policy gradient. Correction: If b(s) depends only on s (not a), subtracting it leaves the gradient unbiased because E_a[∇log π(a|s) b(s)] = b(s) ∇∫π(a|...
+  ~ sample [misconception] Larger absolute reward means a better action, so policy grad
+    Misconception: Larger absolute reward means a better action, so policy gradient will always prefer it. Correction: Policy gradient should prefer actions better than average for the same state. Without...
+
+=== E/agent_memory (Agent memory architectures) — total 8
+  concept: 5
+  example: 1
+  misconception: 1
+  paper_claim: 1
+  ~ sample [concept] Decision/Intervention Memory
+    Decision/Intervention Memory A tier of agent memory recording what was tried and whether it worked. This tier tracks the agent's prior decisions and interventions along with their outcomes, enabling t...
+  ~ sample [concept] Tiered Agent Memory Architecture
+    Tiered Agent Memory Architecture An organization of agent memory into distinct tiers so that relevant information surfaces for a given task. Long-horizon agent systems separate memory into tiers inclu...
+
+=== E/context_selection (Context selection under budgets) — total 0
+  (no artifacts; topic missing or extraction failed)
+
+=== E/multi_agent_orchestration (Multi-agent orchestration & long-horizon execution) — total 0
+  (no artifacts; topic missing or extraction failed)
