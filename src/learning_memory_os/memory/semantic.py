@@ -68,3 +68,19 @@ class SemanticStore:
             token_estimate=max(1, len(body) // 4),
             metadata=r["metadata"] or {},
         )
+
+    def count_by_topic(self, topic_id: str) -> int:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) AS n FROM semantic_items WHERE topic_id = %s",
+                (topic_id,),
+            )
+            return int(cur.fetchone()["n"])
+
+    def delete_by_topic(self, topic_id: str) -> int:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM semantic_items WHERE topic_id = %s",
+                (topic_id,),
+            )
+            return cur.rowcount
