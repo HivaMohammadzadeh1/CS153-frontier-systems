@@ -29,7 +29,7 @@ class ArtifactExtractor:
         data = self.llm.complete_json(
             system=EXTRACTION_SYSTEM,
             user=f"TOPIC: {topic_id}\n\nSOURCE:\n{source_text}",
-            max_tokens=6000,
+            max_tokens=16000,
         )
         out: list[Artifact] = []
         for c in data.get("concepts", []):
