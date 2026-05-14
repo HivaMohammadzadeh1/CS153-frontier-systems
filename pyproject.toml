@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.102.0",
+    "httpx>=0.28.1",
     "openai>=2.36.0",
     "pgvector>=0.4.2",
     "psycopg[binary,pool]>=3.3.4",
