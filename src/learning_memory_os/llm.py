@@ -32,16 +32,47 @@ class LLM:
     ) -> dict:
         text = self.complete(system=system, user=user, max_tokens=max_tokens)
         payload = _extract_first_json_blob(text)
+
+        # Attempt 1: strict json.loads
         try:
             return json.loads(payload)
         except json.JSONDecodeError:
-            cleaned = _escape_raw_control_chars_in_strings(payload)
+            pass
+
+        # Attempt 2: escape raw control chars inside string regions
+        cleaned = _escape_raw_control_chars_in_strings(payload)
+        try:
             return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Attempt 3: tolerant JSON5 parser (handles unquoted keys, trailing commas,
+        # single quotes, embedded unescaped quotes in some cases).
+        try:
+            import json5
+            return json5.loads(cleaned)
+        except Exception:
+            pass
+
+        # Attempt 4: as a last resort, normalize smart quotes and retry strict JSON
+        final = _normalize_smart_quotes(cleaned)
+        return json.loads(final)
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+def _normalize_smart_quotes(s: str) -> str:
+    """Replace common curly/smart quotes with straight ASCII quotes."""
+    return (
+        s
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+    )
+
 
 def _escape_raw_control_chars_in_strings(s: str) -> str:
     """Escape literal newlines/tabs/CRs that appear inside JSON string literals.

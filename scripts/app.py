@@ -44,10 +44,13 @@ st.set_page_config(page_title="Learning Memory OS", layout="wide")
 
 QUIZ_GEN_SYSTEM = (
     "Generate ONE substantive quiz question about the given ML systems engineering topic. "
-    "Output STRICT JSON with two keys: question (string) and rubric (string describing what a correct answer must contain). "
-    "Do not include any commentary, prose, code fences, or explanation outside the JSON object. "
+    "Output STRICT minified JSON on a single line with two keys: "
+    'question (string), rubric (string describing what a correct answer must contain). '
+    "Do NOT include any commentary, prose, code fences, or explanation outside the JSON object. "
     "Output ONLY the JSON object. "
-    "All string values must be a single line — do not include literal newlines, tabs, or carriage returns inside string values."
+    "All string values must be a single line. "
+    "Inside string values, never use unescaped double quotes — use single quotes or 'these' for sub-quoting. "
+    "Do not use smart/curly quotes; only straight ASCII quotes (\")."
 )
 
 # ---------------------------------------------------------------------------
