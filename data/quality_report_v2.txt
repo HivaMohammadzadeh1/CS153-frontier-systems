@@ -1,0 +1,152 @@
+
+=== A/tokenization (Tokenization (BPE, byte-level)) — total 4
+  concept: 3
+  misconception: 1
+
+=== A/transformer_architecture (Transformer architecture & hyperparameters) — total 48
+  code_pattern: 6
+  concept: 14
+  example: 5
+  exercise: 4
+  misconception: 7
+  paper_claim: 12
+
+=== A/attention_moe (Attention variants & MoE) — total 42
+  code_pattern: 5
+  concept: 10
+  example: 5
+  exercise: 4
+  misconception: 7
+  paper_claim: 11
+
+=== A/resource_accounting (Resource accounting (FLOPs, memory, arithmetic intensity)) — total 46
+  code_pattern: 6
+  concept: 14
+  example: 6
+  exercise: 4
+  misconception: 7
+  paper_claim: 9
+
+=== B/gpu_kernels (GPU/TPU hardware & kernels (Triton, FlashAttention2)) — total 38
+  code_pattern: 7
+  concept: 11
+  example: 5
+  exercise: 4
+  misconception: 7
+  paper_claim: 4
+
+=== B/data_parallelism (Data parallelism (DDP)) — total 4
+  concept: 3
+  misconception: 1
+
+=== B/sharded_training (Sharded training (FSDP, ZeRO-1/2/3)) — total 30
+  code_pattern: 3
+  concept: 10
+  example: 3
+  exercise: 3
+  misconception: 5
+  paper_claim: 6
+
+=== B/model_parallelism (Model parallelism (tensor + pipeline)) — total 30
+  code_pattern: 3
+  concept: 11
+  example: 3
+  exercise: 3
+  misconception: 5
+  paper_claim: 5
+
+=== B/scaling_laws (Scaling laws) — total 48
+  code_pattern: 5
+  concept: 11
+  example: 6
+  exercise: 4
+  misconception: 8
+  paper_claim: 14
+
+=== C/kv_cache (KV cache & PagedAttention) — total 115
+  code_pattern: 7
+  concept: 34
+  example: 21
+  exercise: 16
+  misconception: 20
+  paper_claim: 17
+    NEAR-DUP (0.957): 'KV Cache' ≈ 'KV Cache'
+    NEAR-DUP (0.952): 'KV Cache' ≈ 'KV Cache'
+    NEAR-DUP (0.966): 'KV Cache' ≈ 'KV Cache'
+
+=== C/quantization (Quantization (int8/int4, GPTQ/AWQ)) — total 19
+  code_pattern: 2
+  concept: 5
+  example: 3
+  exercise: 2
+  misconception: 4
+  paper_claim: 3
+
+=== C/speculative_decoding (Speculative decoding) — total 16
+  code_pattern: 1
+  concept: 3
+  example: 3
+  exercise: 2
+  misconception: 4
+  paper_claim: 3
+
+=== C/continuous_batching (Continuous batching & request scheduling) — total 16
+  code_pattern: 2
+  concept: 4
+  example: 2
+  exercise: 2
+  misconception: 4
+  paper_claim: 2
+
+=== C/prefill_decode_disagg (Prefill-decode disaggregation & hierarchical caching) — total 0
+  (no artifacts; missing source content)
+
+=== D/pretraining_data (Pretraining data (collection, dedup, filtering)) — total 72
+  code_pattern: 8
+  concept: 27
+  example: 10
+  exercise: 5
+  misconception: 10
+  paper_claim: 12
+
+=== D/sft_rlhf_dpo (SFT + RLHF / DPO) — total 36
+  code_pattern: 3
+  concept: 9
+  example: 4
+  exercise: 3
+  misconception: 6
+  paper_claim: 11
+
+=== D/rl_systems (RL systems for reasoning) — total 29
+  code_pattern: 4
+  concept: 7
+  example: 3
+  exercise: 4
+  misconception: 6
+  paper_claim: 5
+
+=== E/agent_memory (Agent memory architectures) — total 8
+  concept: 5
+  example: 1
+  misconception: 1
+  paper_claim: 1
+
+=== E/context_selection (Context selection under budgets) — total 26
+  code_pattern: 3
+  concept: 8
+  example: 3
+  exercise: 3
+  misconception: 5
+  paper_claim: 4
+
+=== E/multi_agent_orchestration (Multi-agent orchestration & long-horizon execution) — total 27
+  code_pattern: 2
+  concept: 9
+  example: 4
+  exercise: 3
+  misconception: 5
+  paper_claim: 4
+
+=== FLAGS ===
+  kv_cache: 233 near-dup concept pairs
+  prefill_decode_disagg: empty
