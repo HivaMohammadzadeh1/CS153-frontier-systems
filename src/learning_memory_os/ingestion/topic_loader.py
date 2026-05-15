@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import yaml
+import psycopg
 
 
 @dataclass
@@ -26,6 +27,33 @@ def load_topics(path: Path) -> list[Topic]:
             )
         )
     return out
+
+
+def resolve_prerequisite_titles(
+    conn: psycopg.Connection,
+    *,
+    topic_id: str,
+    topics: list[Topic],
+) -> set[str]:
+    """For a given topic, return the set of concept titles from its prerequisite topics.
+
+    The selector's scoring uses `prerequisite_titles` (set[str]) which is matched against
+    `MemoryItem.title`. We look up concept-type artifacts in the prereq topics.
+    """
+    topic = next((t for t in topics if t.id == topic_id), None)
+    if topic is None or not topic.prerequisites:
+        return set()
+
+    prereq_ids = list(topic.prerequisites)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT title FROM semantic_items
+            WHERE topic_id = ANY(%s) AND artifact_type = 'concept'
+            """,
+            (prereq_ids,),
+        )
+        return {r["title"] for r in cur.fetchall()}
 
 
 def resolve_sources(topic: Topic, *, base: Path) -> list[tuple[Path, str, bool]]:

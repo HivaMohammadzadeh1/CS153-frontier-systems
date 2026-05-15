@@ -49,6 +49,18 @@ def main(
             m["id"] for m in student.active_misconceptions(student_id)
         }
 
+        prereq_titles: set[str] = set()
+        if topic_id:
+            from pathlib import Path
+            from learning_memory_os.ingestion.topic_loader import (
+                load_topics,
+                resolve_prerequisite_titles,
+            )
+            topics_cfg = load_topics(Path("config/topics.yaml"))
+            prereq_titles = resolve_prerequisite_titles(
+                conn, topic_id=topic_id, topics=topics_cfg
+            )
+
         tutor = TutorAgent(
             llm=llm, engine=engine, embedder=embedder, logger=logger
         )
@@ -57,7 +69,7 @@ def main(
             question=question,
             candidates=candidates,
             active_misconceptions=misconceptions,
-            prerequisites=set(),
+            prerequisites=prereq_titles,
             recent_ids=set(),
             reuse_counts={},
             budget=budget,
