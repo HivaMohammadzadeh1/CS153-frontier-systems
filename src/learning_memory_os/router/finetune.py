@@ -98,7 +98,7 @@ def finetune(
         load_dtype = torch.bfloat16
     else:
         load_dtype = torch.float32
-    load_kwargs: dict = {"torch_dtype": load_dtype}
+    load_kwargs: dict = {"dtype": load_dtype}
 
     if cfg.use_4bit_base:
         qc = _maybe_quant_config()
@@ -127,12 +127,20 @@ def finetune(
     raw = [_format_for_sft(p, tokenizer.eos_token) for p in pairs]
     ds = Dataset.from_list(raw)
 
+    # On MPS, cap sequence length to conserve memory.
+    # 4096 tokens with SDPA exhausts even 32GB unified memory at batch=1.
+    # Actual trajectories top out at ~1900 tokens, so 2048 captures everything.
+    effective_seq_len = cfg.max_seq_len
+    if device_name == "mps" and effective_seq_len > 2048:
+        effective_seq_len = 2048
+        print(f"[finetune] MPS seq_len cap: {cfg.max_seq_len} -> {effective_seq_len}")
+
     def tokenize(batch):
         out = tokenizer(
             batch["text"],
             truncation=True,
             padding="max_length",
-            max_length=cfg.max_seq_len,
+            max_length=effective_seq_len,
         )
         out["labels"] = out["input_ids"].copy()
         return out
@@ -140,9 +148,20 @@ def finetune(
     tokenized = ds.map(tokenize, batched=True, remove_columns=["text"])
 
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # On MPS, reduce batch size to avoid OOM (32GB unified memory, no swap to VRAM).
+    # Compensate with gradient accumulation so effective batch size stays the same.
+    train_batch_size = cfg.batch_size
+    grad_accum = 1
+    if device_name == "mps" and cfg.batch_size > 1:
+        grad_accum = cfg.batch_size
+        train_batch_size = 1
+        print(f"[finetune] MPS OOM guard: batch_size 1 x grad_accum {grad_accum}")
+
     args = TrainingArguments(
         output_dir=str(output_dir),
-        per_device_train_batch_size=cfg.batch_size,
+        per_device_train_batch_size=train_batch_size,
+        gradient_accumulation_steps=grad_accum,
         num_train_epochs=cfg.epochs,
         learning_rate=cfg.lr,
         logging_steps=50,
