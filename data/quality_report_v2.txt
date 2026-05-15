@@ -63,13 +63,16 @@
   misconception: 8
   paper_claim: 14
 
-=== C/kv_cache (KV cache & PagedAttention) — total 33
+=== C/kv_cache (KV cache & PagedAttention) — total 44
   code_pattern: 3
-  concept: 9
-  example: 4
-  exercise: 4
-  misconception: 5
-  paper_claim: 8
+  concept: 13
+  example: 6
+  exercise: 5
+  misconception: 7
+  paper_claim: 10
+    NEAR-DUP (0.967): 'KV Cache' ≈ 'KV Cache'
+    NEAR-DUP (0.954): 'PagedAttention' ≈ 'PagedAttention'
+    NEAR-DUP (0.967): 'PagedAttention' ≈ 'PagedAttention'
 
 === C/quantization (Quantization (int8/int4, GPTQ/AWQ)) — total 19
   code_pattern: 2
@@ -95,8 +98,13 @@
   misconception: 4
   paper_claim: 2
 
-=== C/prefill_decode_disagg (Prefill-decode disaggregation & hierarchical caching) — total 0
-  (no artifacts; missing source content)
+=== C/prefill_decode_disagg (Prefill-decode disaggregation & hierarchical caching) — total 31
+  code_pattern: 5
+  concept: 8
+  example: 4
+  exercise: 3
+  misconception: 6
+  paper_claim: 5
 
 === D/pretraining_data (Pretraining data (collection, dedup, filtering)) — total 72
   code_pattern: 8
@@ -145,4 +153,4 @@
   paper_claim: 4
 
 === FLAGS ===
-  prefill_decode_disagg: empty
+  kv_cache: 3 near-dup concept pairs

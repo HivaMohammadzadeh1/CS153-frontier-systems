@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ArtifactType(str, Enum):
@@ -42,6 +42,11 @@ class Exercise(_ArtifactBase):
     prompt: str
     starter_code: str = ""
     rubric: str
+
+    @field_validator("starter_code", mode="before")
+    @classmethod
+    def coerce_none_to_empty(cls, v: object) -> str:
+        return "" if v is None else v
 
 
 class CodePattern(_ArtifactBase):
