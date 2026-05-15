@@ -33,7 +33,8 @@ class SemanticStore:
         with self.conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id::text, topic_id, artifact_type, title, body, metadata
+                SELECT id::text, topic_id, artifact_type, title, body, metadata,
+                       embedding::text AS embedding
                 FROM semantic_items WHERE topic_id = %s ORDER BY created_at
                 """,
                 (topic_id,),
@@ -45,10 +46,10 @@ class SemanticStore:
             cur.execute(
                 """
                 SELECT id::text, topic_id, artifact_type, title, body, metadata,
-                       (embedding <-> %s::vector) AS distance
+                       (embedding <=> %s::vector) AS distance
                 FROM semantic_items
                 WHERE embedding IS NOT NULL
-                ORDER BY embedding <-> %s::vector
+                ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
                 (vec_literal(query), vec_literal(query), k),
@@ -58,6 +59,7 @@ class SemanticStore:
     @staticmethod
     def _row_to_item(r: dict) -> MemoryItem:
         body = r["body"] or ""
+        raw_emb = r.get("embedding")
         return MemoryItem(
             id=r["id"],
             tier="semantic",
@@ -67,6 +69,7 @@ class SemanticStore:
             body=body,
             token_estimate=max(1, len(body) // 4),
             metadata=r["metadata"] or {},
+            embedding=_parse_vec(raw_emb) if raw_emb else [],
         )
 
     def count_by_topic(self, topic_id: str) -> int:
@@ -84,3 +87,10 @@ class SemanticStore:
                 (topic_id,),
             )
             return cur.rowcount
+
+
+def _parse_vec(s: str | None) -> list[float]:
+    if not s:
+        return []
+    # pgvector text format: '[0.1,0.2,0.3]' (no spaces)
+    return [float(x) for x in s.strip("[]").split(",") if x]

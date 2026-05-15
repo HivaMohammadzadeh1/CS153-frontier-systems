@@ -45,12 +45,6 @@ def main(
             q_emb = embedder.embed_one(question)
             candidates = semantic.vector_search(query=q_emb, k=20)
 
-        # Re-embed candidates if missing (semantic.by_topic doesn't fetch embedding column).
-        # For MVP, just re-embed cheaply.
-        for c in candidates:
-            if not c.embedding:
-                c.embedding = embedder.embed_one(c.body)
-
         misconceptions = {
             m["id"] for m in student.active_misconceptions(student_id)
         }
