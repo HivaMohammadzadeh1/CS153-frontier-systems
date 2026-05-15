@@ -46,7 +46,8 @@ QUIZ_GEN_SYSTEM = (
     "Generate ONE substantive quiz question about the given ML systems engineering topic. "
     "Output STRICT JSON with two keys: question (string) and rubric (string describing what a correct answer must contain). "
     "Do not include any commentary, prose, code fences, or explanation outside the JSON object. "
-    "Output ONLY the JSON object."
+    "Output ONLY the JSON object. "
+    "All string values must be a single line — do not include literal newlines, tabs, or carriage returns inside string values."
 )
 
 # ---------------------------------------------------------------------------

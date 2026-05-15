@@ -30,16 +30,54 @@ class LLM:
         user: str,
         max_tokens: int = 4096,
     ) -> dict:
-        text = self.complete(
-            system=system, user=user, max_tokens=max_tokens
-        )
+        text = self.complete(system=system, user=user, max_tokens=max_tokens)
         payload = _extract_first_json_blob(text)
-        return json.loads(payload)
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            cleaned = _escape_raw_control_chars_in_strings(payload)
+            return json.loads(cleaned)
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+def _escape_raw_control_chars_in_strings(s: str) -> str:
+    """Escape literal newlines/tabs/CRs that appear inside JSON string literals.
+
+    Some LLMs return JSON like '{"a": "line one
+line two"}' — the raw newline is invalid JSON
+    but easy to recover by escaping. Walks chars tracking string state."""
+    out: list[str] = []
+    in_string = False
+    escape = False
+    for ch in s:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string:
+            if ch == "\n":
+                out.append("\\n")
+                continue
+            if ch == "\r":
+                out.append("\\r")
+                continue
+            if ch == "\t":
+                out.append("\\t")
+                continue
+        out.append(ch)
+    return "".join(out)
+
 
 def _extract_first_json_blob(text: str) -> str:
     """Find the first balanced { ... } or [ ... ] in text. Tolerates leading prose,

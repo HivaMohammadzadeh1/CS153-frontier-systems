@@ -66,3 +66,37 @@ def test_llm_complete_json_handles_code_fence():
         llm = LLM(api_key="sk-test", model="claude-opus-4-7")
         out = llm.complete_json(system="x", user="y")
         assert out == {"a": 1, "b": [2, 3]}
+
+
+def test_llm_complete_json_handles_raw_newlines_in_strings():
+    """Regression: LLM sometimes puts literal newlines inside string values."""
+    from unittest.mock import MagicMock, patch
+    from learning_memory_os.llm import LLM
+
+    fake_response = MagicMock()
+    fake_response.content = [
+        MagicMock(text='{"question": "Line one\nline two", "rubric": "ok"}')
+    ]
+    with patch("learning_memory_os.llm.Anthropic") as MockAnthropic:
+        client = MockAnthropic.return_value
+        client.messages.create.return_value = fake_response
+        llm = LLM(api_key="sk-test", model="claude-opus-4-7")
+        out = llm.complete_json(system="x", user="y")
+        # Result should preserve the newline (now properly decoded as a real newline)
+        assert out == {"question": "Line one\nline two", "rubric": "ok"}
+
+
+def test_llm_complete_json_handles_tab_in_string():
+    from unittest.mock import MagicMock, patch
+    from learning_memory_os.llm import LLM
+
+    fake_response = MagicMock()
+    fake_response.content = [
+        MagicMock(text='{"a": "hello\tworld"}')
+    ]
+    with patch("learning_memory_os.llm.Anthropic") as MockAnthropic:
+        client = MockAnthropic.return_value
+        client.messages.create.return_value = fake_response
+        llm = LLM(api_key="sk-test", model="claude-opus-4-7")
+        out = llm.complete_json(system="x", user="y")
+        assert out == {"a": "hello\tworld"}
