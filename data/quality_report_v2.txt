@@ -63,13 +63,13 @@
   misconception: 8
   paper_claim: 14
 
-=== C/kv_cache (KV cache & PagedAttention) — total 42
-  code_pattern: 7
-  concept: 2
-  example: 10
-  exercise: 16
-  misconception: 6
-  paper_claim: 1
+=== C/kv_cache (KV cache & PagedAttention) — total 33
+  code_pattern: 3
+  concept: 9
+  example: 4
+  exercise: 4
+  misconception: 5
+  paper_claim: 8
 
 === C/quantization (Quantization (int8/int4, GPTQ/AWQ)) — total 19
   code_pattern: 2
