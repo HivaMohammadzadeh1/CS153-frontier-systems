@@ -21,6 +21,24 @@ from ..trajectories.schemas import Trajectory
 from ..trajectories.serializer import trajectory_to_training_pair
 
 
+def _detect_device_and_precision() -> tuple[str, dict]:
+    """Detect torch device + return precision kwargs for TrainingArguments.
+
+    Returns (device_name, training_args_kwargs).
+    - CUDA: use bf16=True (fast, well-supported)
+    - MPS:  no precision flags; transformers >=4.41 auto-detects MPS and
+            bf16 in TrainingArguments is unreliable there — use fp32 default.
+    - CPU:  no precision flags, fp32 default.
+    """
+    if torch.cuda.is_available():
+        return "cuda", {"bf16": True}
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        # transformers 4.41+ dropped use_mps_device; MPS is auto-detected.
+        # bf16 in TrainingArguments is unreliable on MPS; rely on fp32 default.
+        return "mps", {}
+    return "cpu", {}
+
+
 @dataclass
 class RouterFineTuneConfig:
     hf_model: str
@@ -67,11 +85,21 @@ def finetune(
     output_dir: Path,
     seed: int = 42,
 ) -> Path:
+    device_name, precision_kwargs = _detect_device_and_precision()
+    print(f"[finetune] detected device: {device_name}  precision_kwargs: {precision_kwargs}")
+
     tokenizer = AutoTokenizer.from_pretrained(cfg.hf_model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    load_kwargs = {"torch_dtype": torch.bfloat16}
+    # Choose load dtype: bf16 on CUDA/MPS (MPS supports bf16 at the model level),
+    # fp32 on CPU.
+    if device_name in ("cuda", "mps"):
+        load_dtype = torch.bfloat16
+    else:
+        load_dtype = torch.float32
+    load_kwargs: dict = {"torch_dtype": load_dtype}
+
     if cfg.use_4bit_base:
         qc = _maybe_quant_config()
         if qc is not None:
@@ -80,6 +108,10 @@ def finetune(
             print("WARN: 4-bit quant requested but bitsandbytes unavailable; loading bf16 instead.")
 
     base = AutoModelForCausalLM.from_pretrained(cfg.hf_model, **load_kwargs)
+
+    # Explicitly move to MPS if needed (defensive; Trainer also does this).
+    if device_name == "mps":
+        base = base.to("mps")
 
     lora_cfg = LoraConfig(
         r=cfg.lora_r,
@@ -116,9 +148,9 @@ def finetune(
         logging_steps=50,
         save_strategy="epoch",
         save_total_limit=1,
-        bf16=True,
         report_to="none",
         seed=seed,
+        **precision_kwargs,
     )
     trainer = Trainer(
         model=model,
