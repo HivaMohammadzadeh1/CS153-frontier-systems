@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
     "streamlit>=1.57.0",
+    "streamlit-mermaid>=0.3.0",
     "structlog>=25.5.0",
     "torch>=2.12.0",
     "transformers>=5.8.1",
@@ -37,7 +38,7 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
-pythonpath = ["."]
+pythonpath = [".", "src"]
 
 [dependency-groups]
 dev = [

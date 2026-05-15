@@ -9,6 +9,7 @@ would expose `decision` from AgentResponse, but that's deferred to keep the
 agent API stable.
 """
 
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -25,9 +26,172 @@ from learning_memory_os.selector.engine import RoutingEngine
 from learning_memory_os.agents.tutor import TutorAgent
 from learning_memory_os.logging_utils.interactions import InteractionLogger
 from learning_memory_os.ingestion.topic_loader import load_topics, resolve_prerequisite_titles
+from learning_memory_os.eval.quiz import QuizQuestion, score_answer
+
+# Optional mermaid renderer — fall back gracefully if unavailable
+try:
+    from streamlit_mermaid import st_mermaid
+    _MERMAID_OK = True
+except ImportError:
+    _MERMAID_OK = False
 
 
 st.set_page_config(page_title="Learning Memory OS", layout="wide")
+
+
+# ---------------------------------------------------------------------------
+# Starter prompts per topic
+# ---------------------------------------------------------------------------
+
+_STARTER_PROMPTS: dict[str, list[str]] = {
+    "kv_cache": [
+        "What is a KV cache and why does it exist in transformers?",
+        "How does KV cache memory scale with batch size and sequence length?",
+        "What are the main strategies for compressing or evicting KV cache entries?",
+        "Draw me a diagram showing how KV cache fits into the decode loop.",
+    ],
+    "context_selection": [
+        "What problem does context selection solve for RAG systems?",
+        "How does relevance scoring differ from recency scoring in context selection?",
+        "What happens when the context budget is exceeded?",
+        "Show me the trade-offs between dense retrieval and BM25 for context selection.",
+    ],
+    "quantization": [
+        "What is quantization and why does it matter for LLM inference?",
+        "What's the difference between INT8 and INT4 quantization?",
+        "How does GPTQ differ from AWQ?",
+        "What accuracy loss should I expect from 4-bit quantization on a large model?",
+    ],
+    "agent_memory": [
+        "What are the different tiers of memory an AI agent can use?",
+        "How does episodic memory differ from semantic memory in an agent?",
+        "What are common failure modes when agents lose context mid-task?",
+        "Show me how memory is read and written during an agent turn.",
+    ],
+    "pretraining_data": [
+        "What makes a high-quality pretraining dataset?",
+        "How does data deduplication affect downstream model quality?",
+        "What is the Chinchilla scaling law and what does it say about data?",
+        "What ethical issues arise from pretraining data collection?",
+    ],
+    "scaling_laws": [
+        "What do scaling laws predict about model performance?",
+        "What is the Chinchilla result and why did it change how we train models?",
+        "How do compute-optimal scaling laws differ from earlier power laws?",
+        "What happens to scaling laws at very large scales — do they hold?",
+    ],
+    "transformer_architecture": [
+        "Explain the transformer architecture in one paragraph.",
+        "Why is multi-head attention better than single-head attention?",
+        "How does positional encoding work and what are the alternatives?",
+        "Draw a diagram of one transformer decoder block.",
+    ],
+    "attention_moe": [
+        "What is Mixture-of-Experts (MoE) and how does it scale parameters efficiently?",
+        "How does sparse attention differ from full attention?",
+        "What are the trade-offs of routing in MoE models?",
+        "How does FlashAttention speed up the attention computation?",
+    ],
+    "speculative_decoding": [
+        "What is speculative decoding and why is it faster?",
+        "What makes a good draft model for speculative decoding?",
+        "What are the acceptance rate trade-offs in speculative decoding?",
+        "Draw a sequence diagram of one speculative decoding step.",
+    ],
+    "continuous_batching": [
+        "What problem does continuous batching solve over static batching?",
+        "How does PagedAttention enable continuous batching?",
+        "What is the throughput vs latency trade-off in continuous batching?",
+        "How does vLLM implement continuous batching internally?",
+    ],
+}
+
+_GENERIC_PROMPTS = [
+    "Explain the core idea of this topic in plain English.",
+    "What's the most common misconception about this topic?",
+    "Give me a concrete example of how this is used in practice.",
+    "What should I learn next after understanding this topic?",
+]
+
+
+def _starter_prompts_for(topic_id: str | None) -> list[str]:
+    if topic_id and topic_id in _STARTER_PROMPTS:
+        return _STARTER_PROMPTS[topic_id]
+    return _GENERIC_PROMPTS
+
+
+# ---------------------------------------------------------------------------
+# Citation rendering
+# ---------------------------------------------------------------------------
+
+_HEX8_RE = re.compile(r"\[([0-9a-f]{8})\]", re.IGNORECASE)
+
+
+def _render_citations(text: str, selected_items: list[dict]) -> str:
+    """Replace [hex8id] citations with numbered [1] [2] ... and append a References section."""
+    id_to_num: dict[str, int] = {}
+    counter = [0]
+
+    def _replace(match: re.Match) -> str:
+        raw_id = match.group(1).lower()
+        if raw_id not in id_to_num:
+            counter[0] += 1
+            id_to_num[raw_id] = counter[0]
+        return f"[{id_to_num[raw_id]}]"
+
+    rendered = _HEX8_RE.sub(_replace, text)
+
+    if id_to_num and selected_items:
+        # Build a lookup from first-8-chars to title
+        item_titles: dict[str, str] = {}
+        for it in selected_items:
+            item_id = it.get("id", "")
+            short = item_id[:8].lower() if item_id else ""
+            if short:
+                item_titles[short] = it.get("title", item_id[:8])
+
+        refs_lines = ["\n\n---\n**References:**"]
+        for raw_id, num in sorted(id_to_num.items(), key=lambda kv: kv[1]):
+            title = item_titles.get(raw_id, raw_id)
+            refs_lines.append(f"**[{num}]** {title}")
+        rendered += "\n".join(refs_lines)
+
+    return rendered
+
+
+# ---------------------------------------------------------------------------
+# Mermaid-aware renderer
+# ---------------------------------------------------------------------------
+
+_MERMAID_FENCE_RE = re.compile(
+    r"```mermaid\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
+)
+
+
+def _render_with_mermaid(text: str) -> None:
+    """Render text that may contain ```mermaid blocks.
+
+    Non-mermaid chunks go to st.markdown; mermaid blocks go to st_mermaid
+    (or a plain code block if the library is unavailable).
+    """
+    parts = _MERMAID_FENCE_RE.split(text)
+    # split() with one group: [before, diagram1, after_diagram1, diagram2, ...]
+    # even indices = plain text, odd indices = mermaid diagram code
+    for i, part in enumerate(parts):
+        if not part:
+            continue
+        if i % 2 == 0:
+            # Plain text chunk
+            st.markdown(part)
+        else:
+            # Mermaid diagram
+            if _MERMAID_OK:
+                try:
+                    st_mermaid(part.strip(), height=350)
+                except Exception:
+                    st.code(part.strip(), language="mermaid")
+            else:
+                st.code(part.strip(), language="mermaid")
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +234,15 @@ def _init_session():
         st.session_state.reuse_counts = Counter()
     if "confirm_clear" not in st.session_state:
         st.session_state.confirm_clear = False
+    # Track which concept ids have been selected per topic this session
+    if "seen_concepts_by_topic" not in st.session_state:
+        st.session_state.seen_concepts_by_topic = {}  # topic_id -> set[concept_id]
+    # Quiz state: keyed by message index
+    if "quiz_state" not in st.session_state:
+        st.session_state.quiz_state = {}  # msg_idx -> {"question":..., "rubric":..., "answer":..., "score":...}
+    # Pending starter prompt (set when a chip is clicked)
+    if "pending_prompt" not in st.session_state:
+        st.session_state.pending_prompt = None
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +308,9 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
             st.session_state.last_decision = None
             st.session_state.reuse_counts = Counter()
             st.session_state.confirm_clear = False
+            st.session_state.seen_concepts_by_topic = {}
+            st.session_state.quiz_state = {}
+            st.session_state.pending_prompt = None
             st.rerun()
         if c2.button("Cancel"):
             st.session_state.confirm_clear = False
@@ -148,55 +324,219 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
 # ---------------------------------------------------------------------------
 
 
-def _render_routing_panel(col):
-    """Render the observable routing panel in the right column."""
-    col.subheader("Routing — last turn")
+def _render_routing_panel(col, topic_id: str | None):
+    """Render the routing panel in the right column."""
 
     d = st.session_state.last_decision
+
+    # --- Concepts touched this turn (always visible) ---
+    col.subheader("Concepts touched this turn")
     if d is None:
         col.caption("Ask a question to see what the routing engine selected.")
+    else:
+        if d["selected"]:
+            for it in d["selected"]:
+                col.write(f"- {it['title']}")
+        else:
+            col.caption("(no items selected — candidates list was empty)")
+
+        # --- Progress stat ---
+        col.subheader("Your progress")
+        seen_ids = st.session_state.seen_concepts_by_topic.get(topic_id or "_global", set())
+        n_seen = len(seen_ids)
+
+        # Count total concept-type artifacts for this topic
+        n_total = 0
+        if topic_id:
+            conn = _new_conn()
+            try:
+                semantic = SemanticStore(conn)
+                all_items = semantic.by_topic(topic_id)
+                n_total = sum(1 for it in all_items if it.artifact_type == "concept")
+            finally:
+                conn.close()
+
+        topic_label = topic_id or "global"
+        if n_total > 0:
+            col.write(f"Topic: **{topic_label}**  •  Concepts covered: **{n_seen} / {n_total}**")
+            col.progress(min(n_seen / n_total, 1.0))
+        else:
+            col.write(f"Topic: **{topic_label}**  •  Concepts covered: **{n_seen}**")
+
+    # --- Collapsed diagnostics ---
+    with col.expander("🔍 How this answer was built", expanded=False):
+        if d is None:
+            st.caption("No routing data yet.")
+        else:
+            n_sel = len(d["selected"])
+            n_total_items = n_sel + len(d["dropped"])
+            st.metric("Items selected", f"{n_sel} / {n_total_items}")
+            st.metric("Tokens used", f"{d['tokens_used']} / {d['budget']}")
+
+            st.markdown("**Selected items (with scores)**")
+            if not d["selected"]:
+                st.caption("(no items selected)")
+            for it in d["selected"]:
+                score = d["scores"].get(it["id"])
+                label = f"`{it['id'][:8]}` — {it['title'][:48]}"
+                with st.expander(label):
+                    if score:
+                        st.write(
+                            f"**total {score['total']:.3f}** = "
+                            f"rel {score['relevance']:.2f} + "
+                            f"rec {score['recency']:.2f} + "
+                            f"misc {score['misconception']:.2f} + "
+                            f"prereq {score['prerequisite']:.2f} + "
+                            f"reuse {score['reuse']:.2f}"
+                        )
+                    st.caption(it["body"][:300] + ("..." if len(it["body"]) > 300 else ""))
+
+            if d["dropped"]:
+                st.markdown("**Dropped (over budget)**")
+                dropped_sorted = sorted(
+                    d["dropped"],
+                    key=lambda x: d["scores"].get(x["id"], {}).get("total", 0.0),
+                    reverse=True,
+                )[:5]
+                for it in dropped_sorted:
+                    score = d["scores"].get(it["id"])
+                    label = f"`{it['id'][:8]}` — {it['title'][:48]}"
+                    with st.expander(label):
+                        if score:
+                            st.write(
+                                f"total **{score['total']:.3f}** — "
+                                f"would cost {it['token_estimate']} tokens"
+                            )
+                        st.caption(it["body"][:200] + ("..." if len(it["body"]) > 200 else ""))
+
+
+# ---------------------------------------------------------------------------
+# Progress bar (shown below welcome / above first message)
+# ---------------------------------------------------------------------------
+
+
+def _render_progress_bar(topic_id: str | None):
+    seen_ids = st.session_state.seen_concepts_by_topic.get(topic_id or "_global", set())
+    n_seen = len(seen_ids)
+
+    n_total = 0
+    if topic_id:
+        conn = _new_conn()
+        try:
+            semantic = SemanticStore(conn)
+            all_items = semantic.by_topic(topic_id)
+            n_total = sum(1 for it in all_items if it.artifact_type == "concept")
+        finally:
+            conn.close()
+
+    if n_total > 0:
+        fraction = min(n_seen / n_total, 1.0)
+        st.progress(fraction)
+        st.caption(f"Concepts touched in this topic: {n_seen} / {n_total}")
+    elif n_seen > 0:
+        st.caption(f"Concepts touched this session: {n_seen}")
+
+
+# ---------------------------------------------------------------------------
+# Quiz button + flow
+# ---------------------------------------------------------------------------
+
+
+def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str):
+    """Render the 'Test yourself' button and quiz flow for a given assistant message index."""
+    quiz_key = str(msg_idx)
+    state = st.session_state.quiz_state.get(quiz_key, {})
+
+    if not state:
+        if st.button("🎯 Test yourself", key=f"quiz_btn_{msg_idx}"):
+            with st.spinner("Generating a quiz question..."):
+                llm, _ = _llm_and_embedder()
+                topic_label = topic_id or "ML systems engineering"
+                try:
+                    result = llm.complete_json(
+                        system=(
+                            "You are an ML systems engineering quiz generator. "
+                            "Given a topic, output STRICT JSON with exactly two keys: "
+                            '{"question": "<one focused question>", "rubric": "<what a correct answer should mention>"} '
+                            "No commentary outside JSON."
+                        ),
+                        user=f"Topic: {topic_label}",
+                        max_tokens=256,
+                    )
+                    q_text = result.get("question", "")
+                    rubric = result.get("rubric", "")
+                except Exception as exc:
+                    st.error(f"Could not generate quiz question: {exc}")
+                    return
+
+            if q_text:
+                st.session_state.quiz_state[quiz_key] = {
+                    "question": q_text,
+                    "rubric": rubric,
+                    "answer": None,
+                    "score": None,
+                    "rationale": None,
+                }
+                st.rerun()
         return
 
-    n_sel = len(d["selected"])
-    n_total = n_sel + len(d["dropped"])
-    col.metric("Items selected", f"{n_sel} / {n_total}")
-    col.metric("Tokens used", f"{d['tokens_used']} / {d['budget']}")
+    # Question is ready
+    st.info(f"**Quiz:** {state['question']}")
 
-    col.markdown("**Selected items**")
-    if not d["selected"]:
-        col.caption("(no items selected — candidates list was empty)")
-    for it in d["selected"]:
-        score = d["scores"].get(it["id"])
-        label = f"`{it['id'][:8]}` — {it['title'][:48]}"
-        with col.expander(label):
-            if score:
-                col.write(
-                    f"**total {score['total']:.3f}** = "
-                    f"rel {score['relevance']:.2f} + "
-                    f"rec {score['recency']:.2f} + "
-                    f"misc {score['misconception']:.2f} + "
-                    f"prereq {score['prerequisite']:.2f} + "
-                    f"reuse {score['reuse']:.2f}"
+    if state.get("score") is not None:
+        # Already scored
+        score_val = state["score"]
+        bar_val = int(score_val * 100)
+        color = "green" if score_val >= 0.7 else ("orange" if score_val >= 0.4 else "red")
+        st.markdown(
+            f"**Score: {bar_val}/100** — <span style='color:{color}'>{state['rationale']}</span>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Try another question", key=f"quiz_retry_{msg_idx}"):
+            del st.session_state.quiz_state[quiz_key]
+            st.rerun()
+    else:
+        with st.form(key=f"quiz_form_{msg_idx}"):
+            answer = st.text_area("Your answer:", key=f"quiz_answer_{msg_idx}")
+            submitted = st.form_submit_button("Submit")
+
+        if submitted and answer.strip():
+            with st.spinner("Grading..."):
+                llm, _ = _llm_and_embedder()
+                qq = QuizQuestion(
+                    question=state["question"],
+                    rubric=state["rubric"],
                 )
-            col.caption(it["body"][:300] + ("..." if len(it["body"]) > 300 else ""))
+                try:
+                    quiz_score = score_answer(question=qq, student_answer=answer, judge_llm=llm)
+                except Exception as exc:
+                    st.error(f"Grading failed: {exc}")
+                    return
 
-    if d["dropped"]:
-        col.markdown("**Dropped (over budget)**")
-        dropped_sorted = sorted(
-            d["dropped"],
-            key=lambda x: d["scores"].get(x["id"], {}).get("total", 0.0),
-            reverse=True,
-        )[:5]
-        for it in dropped_sorted:
-            score = d["scores"].get(it["id"])
-            label = f"`{it['id'][:8]}` — {it['title'][:48]}"
-            with col.expander(label):
-                if score:
-                    col.write(
-                        f"total **{score['total']:.3f}** — "
-                        f"would cost {it['token_estimate']} tokens"
-                    )
-                col.caption(it["body"][:200] + ("..." if len(it["body"]) > 200 else ""))
+            st.session_state.quiz_state[quiz_key].update(
+                {"answer": answer, "score": quiz_score.score, "rationale": quiz_score.rationale}
+            )
+
+            # Persist as episodic event
+            conn = _new_conn()
+            try:
+                episodic = EpisodicStore(conn)
+                episodic.append(
+                    student_id=student_id,
+                    event_type="quiz_attempt",
+                    payload={
+                        "question": state["question"],
+                        "answer": answer,
+                        "score": quiz_score.score,
+                        "rationale": quiz_score.rationale,
+                        "topic_id": topic_id,
+                    },
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +612,14 @@ def _handle_turn(
         for it in response.selected_items:
             st.session_state.reuse_counts[it.id] += 1
 
+        # Track seen concepts for progress bar
+        topic_key = topic_id or "_global"
+        if topic_key not in st.session_state.seen_concepts_by_topic:
+            st.session_state.seen_concepts_by_topic[topic_key] = set()
+        for it in decision.selected:
+            if getattr(it, "artifact_type", None) == "concept":
+                st.session_state.seen_concepts_by_topic[topic_key].add(it.id)
+
         # Persist episodic events
         episodic.append(
             student_id=student_id,
@@ -335,6 +683,45 @@ def _handle_turn(
 
 
 # ---------------------------------------------------------------------------
+# Welcome screen
+# ---------------------------------------------------------------------------
+
+
+def _render_welcome(topic_id: str | None):
+    topic_label = topic_id if topic_id else "any ML systems topic"
+    st.markdown(
+        f"""
+<div style="
+    background: #f5f7fb;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 16px;
+    border-left: 4px solid #5b6cff;
+">
+<h2 style="margin-top:0; color:#1f2235;">👋 Welcome — I'm your ML systems tutor.</h2>
+<p style="color:#444; font-size:1.05rem;">
+    Pick a topic on the left, then ask anything — or click one of the starter prompts below to dive in.
+    I'll give you a concise answer, a diagram when helpful, and always invite you to go deeper.
+</p>
+<p style="color:#888; font-size:0.9rem; margin-bottom:0;">
+    Currently focused on: <strong>{topic_label}</strong>
+</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # Starter prompt chips
+    starters = _starter_prompts_for(topic_id)
+    st.markdown("**Jump in with:**")
+    cols = st.columns(len(starters))
+    for i, (col, prompt) in enumerate(zip(cols, starters)):
+        if col.button(prompt, key=f"starter_{i}"):
+            st.session_state.pending_prompt = prompt
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -355,12 +742,38 @@ def main():
     main_col, right_col = st.columns([3, 2])
 
     with main_col:
-        # Replay chat history
-        for msg in st.session_state.messages:
+        # Welcome screen when chat is empty
+        if not st.session_state.messages:
+            _render_welcome(topic_id)
+            _render_progress_bar(topic_id)
+
+        # Replay chat history (with citation rendering + mermaid + quiz)
+        for idx, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+                if msg["role"] == "assistant":
+                    # Re-derive selected items from last_decision for citation rendering
+                    # For replayed messages we only have the raw text; use stored decision
+                    # for the most recent assistant turn, empty list for earlier turns.
+                    selected_items = []
+                    if idx == len(st.session_state.messages) - 1 and st.session_state.last_decision:
+                        selected_items = st.session_state.last_decision.get("selected", [])
+                    rendered = _render_citations(msg["content"], selected_items)
+                    _render_with_mermaid(rendered)
+                    # Quiz button below each assistant message
+                    _render_quiz_for_message(idx, topic_id, student_id)
+                else:
+                    st.markdown(msg["content"])
+
+        # Handle pending starter prompt (chip click)
+        active_prompt: str | None = None
+        if st.session_state.pending_prompt:
+            active_prompt = st.session_state.pending_prompt
+            st.session_state.pending_prompt = None
 
         prompt = st.chat_input("Ask the tutor a question...")
+        if active_prompt:
+            prompt = active_prompt
+
         if prompt:
             # Show user message immediately
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -371,13 +784,18 @@ def main():
             with st.chat_message("assistant"):
                 with st.spinner("Selecting context and generating response..."):
                     reply = _handle_turn(prompt, student_id, topic_id, budget)
-                st.markdown(reply)
+                selected_items = st.session_state.last_decision.get("selected", []) if st.session_state.last_decision else []
+                rendered_reply = _render_citations(reply, selected_items)
+                _render_with_mermaid(rendered_reply)
+                # Quiz button for this new message
+                new_msg_idx = len(st.session_state.messages)  # will be the index after append
+                _render_quiz_for_message(new_msg_idx, topic_id, student_id)
 
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.rerun()
 
     with right_col:
-        _render_routing_panel(right_col)
+        _render_routing_panel(right_col, topic_id)
 
 
 if __name__ == "__main__":
