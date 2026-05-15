@@ -38,6 +38,16 @@ except ImportError:
 
 st.set_page_config(page_title="Learning Memory OS", layout="wide")
 
+# ---------------------------------------------------------------------------
+# Quiz generation system prompt
+# ---------------------------------------------------------------------------
+
+QUIZ_GEN_SYSTEM = (
+    "Generate ONE substantive quiz question about the given ML systems engineering topic. "
+    "Output STRICT JSON with two keys: question (string) and rubric (string describing what a correct answer must contain). "
+    "Do not include any commentary, prose, code fences, or explanation outside the JSON object. "
+    "Output ONLY the JSON object."
+)
 
 # ---------------------------------------------------------------------------
 # Starter prompts per topic
@@ -454,12 +464,7 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
                 topic_label = topic_id or "ML systems engineering"
                 try:
                     result = llm.complete_json(
-                        system=(
-                            "You are an ML systems engineering quiz generator. "
-                            "Given a topic, output STRICT JSON with exactly two keys: "
-                            '{"question": "<one focused question>", "rubric": "<what a correct answer should mention>"} '
-                            "No commentary outside JSON."
-                        ),
+                        system=QUIZ_GEN_SYSTEM,
                         user=f"Topic: {topic_label}",
                         max_tokens=256,
                     )

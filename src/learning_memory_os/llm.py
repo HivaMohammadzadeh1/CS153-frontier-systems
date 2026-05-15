@@ -33,6 +33,63 @@ class LLM:
         text = self.complete(
             system=system, user=user, max_tokens=max_tokens
         )
-        match = re.search(r"\{.*\}|\[.*\]", text, re.DOTALL)
-        payload = match.group(0) if match else text
+        payload = _extract_first_json_blob(text)
         return json.loads(payload)
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _extract_first_json_blob(text: str) -> str:
+    """Find the first balanced { ... } or [ ... ] in text. Tolerates leading prose,
+    fenced code blocks, and trailing commentary. Returns the JSON substring (no parsing)."""
+    if not text:
+        return text
+    # Strip common markdown fences
+    stripped = text.strip()
+    for fence_open in ("```json", "```JSON", "```"):
+        if stripped.startswith(fence_open):
+            stripped = stripped[len(fence_open):].lstrip()
+            # Strip trailing fence if present
+            if stripped.endswith("```"):
+                stripped = stripped[:-3].rstrip()
+            break
+
+    # Find the first { or [ and scan forward to its matching close
+    start_idx = -1
+    open_ch = ""
+    close_ch = ""
+    for i, ch in enumerate(stripped):
+        if ch in "{[":
+            start_idx = i
+            open_ch = ch
+            close_ch = "}" if ch == "{" else "]"
+            break
+    if start_idx == -1:
+        return stripped   # No JSON found; let json.loads raise
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start_idx, len(stripped)):
+        ch = stripped[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return stripped[start_idx:i + 1]
+    # If we ran off the end, return what we have; json.loads will surface the real error
+    return stripped[start_idx:]
