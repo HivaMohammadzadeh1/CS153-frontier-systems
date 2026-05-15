@@ -63,16 +63,13 @@
   misconception: 8
   paper_claim: 14
 
-=== C/kv_cache (KV cache & PagedAttention) — total 115
+=== C/kv_cache (KV cache & PagedAttention) — total 42
   code_pattern: 7
-  concept: 34
-  example: 21
+  concept: 2
+  example: 10
   exercise: 16
-  misconception: 20
-  paper_claim: 17
-    NEAR-DUP (0.957): 'KV Cache' ≈ 'KV Cache'
-    NEAR-DUP (0.952): 'KV Cache' ≈ 'KV Cache'
-    NEAR-DUP (0.966): 'KV Cache' ≈ 'KV Cache'
+  misconception: 6
+  paper_claim: 1
 
 === C/quantization (Quantization (int8/int4, GPTQ/AWQ)) — total 19
   code_pattern: 2
@@ -148,5 +145,4 @@
   paper_claim: 4
 
 === FLAGS ===
-  kv_cache: 233 near-dup concept pairs
   prefill_decode_disagg: empty
