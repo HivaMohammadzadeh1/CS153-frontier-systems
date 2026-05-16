@@ -38,6 +38,7 @@ except ImportError:
 
 st.set_page_config(
     page_title="Learning Memory OS",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -202,11 +203,17 @@ def _render_citations(text: str, selected_items: list[dict]) -> str:
             if short:
                 item_titles[short] = it.get("title", item_id[:8])
 
-        refs_lines = ["\n\n---\n**References:**"]
-        for raw_id, num in sorted(id_to_num.items(), key=lambda kv: kv[1]):
-            title = item_titles.get(raw_id, raw_id)
-            refs_lines.append(f"**[{num}]** {title}")
-        rendered += "\n".join(refs_lines)
+        list_items = "".join(
+            f"<li>[{num}] {item_titles.get(raw_id, raw_id)}</li>"
+            for raw_id, num in sorted(id_to_num.items(), key=lambda kv: kv[1])
+        )
+        refs_html = (
+            f'\n\n<details class="lm-refs">'
+            f"<summary>Sources ▾</summary>"
+            f"<ol>{list_items}</ol>"
+            f"</details>"
+        )
+        rendered += refs_html
 
     return rendered
 
@@ -321,67 +328,107 @@ def _init_session():
 def _inject_css():
     st.markdown(
         """
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* ---- Typography ---- */
+html, body, [class*="css"], [data-testid="stMarkdownContainer"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
 /* ---- Base ---- */
-.stApp { background: #fafbff; }
+.stApp { background: #f7f8fb; }
 
 /* ---- Rounded borders on containers ---- */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius: 14px !important;
-    box-shadow: 0 1px 4px rgba(50, 60, 100, 0.07);
+    border-radius: 12px !important;
+    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
 }
 
 /* ---- Chat message bubbles ---- */
 [data-testid="stChatMessage"] {
-    border-radius: 16px;
-    padding: 6px 10px;
-    margin-bottom: 8px;
+    background: transparent !important;
+    border-radius: 12px;
+    padding: 10px 14px !important;
+    margin-bottom: 10px;
+    line-height: 1.55;
+}
+[data-testid="stChatMessage"][aria-label*="user"] {
+    background: #f1f3f5 !important;
+}
+[data-testid="stChatMessage"][aria-label*="assistant"] {
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px rgba(17,24,39,0.05);
 }
 
-/* ---- Quiz card (yellow/orange gradient) ---- */
+/* ---- Cards (quiz / diag) ---- */
+.lm-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 12px 0;
+    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+}
+.lm-quiz-card  { border-left: 4px solid #5b6cff; }
+.lm-diag-card  { border-left: 4px solid #f59e0b; }
+.lm-card-header { font-weight: 600; font-size: 16px; color: #111827; margin-bottom: 8px; }
+.lm-card-sub    { color: #6b7280; font-size: 13px; }
+
+/* ---- Legacy card aliases (kept for any remaining inline refs) ---- */
 .quiz-card {
-    background: linear-gradient(135deg, #fff8e1, #fff3d6);
-    border-left: 4px solid #ff9a3c;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-left: 4px solid #5b6cff;
     padding: 16px 18px;
     border-radius: 12px;
     margin: 12px 0;
+    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
 }
-
-/* ---- Diagnostic card (deeper orange) ---- */
 .diag-card {
-    background: linear-gradient(135deg, #fff4e6, #ffe9d6);
-    border-left: 4px solid #ff6f3c;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-left: 4px solid #f59e0b;
     padding: 16px 18px;
     border-radius: 12px;
     margin: 12px 0;
+    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
 }
 
-/* ---- Score colours ---- */
-.score-good { color: #1e8a4f; font-weight: 700; font-size: 28px; }
-.score-mid  { color: #c47a1a; font-weight: 700; font-size: 28px; }
-.score-bad  { color: #c43a3a; font-weight: 700; font-size: 28px; }
+/* ---- Score colours (new classes) ---- */
+.lm-score { font-size: 36px; font-weight: 700; font-feature-settings: 'tnum';
+            line-height: 1; margin: 8px 0 4px; }
+.lm-score--good { color: #16a34a; }
+.lm-score--mid  { color: #d97706; }
+.lm-score--bad  { color: #dc2626; }
+
+/* ---- Legacy score aliases ---- */
+.score-good { color: #16a34a; font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
+.score-mid  { color: #d97706; font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
+.score-bad  { color: #dc2626; font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
 
 /* ---- Muted / italic helpers ---- */
-.muted      { color: #6b7280; font-size: 0.9em; font-style: italic; }
-.ref-list   { font-size: 0.85em; color: #4b5563; }
+.muted     { color: #6b7280; font-size: 0.92em; font-style: italic; }
+.lm-muted  { color: #6b7280; font-style: italic; font-size: 0.92em; }
+.ref-list  { font-size: 0.85em; color: #4b5563; }
+
+/* ---- References disclosure ---- */
+.lm-refs { font-size: 0.88em; color: #4b5563; margin-top: 12px; }
+.lm-refs summary { cursor: pointer; color: #6b7280; font-weight: 500; user-select: none; }
+.lm-refs ol { margin: 6px 0 0 18px; padding: 0; }
 
 /* ---- Hero header ---- */
-.hero-title {
-    font-size: 2rem;
-    font-weight: 800;
-    color: #1a1f3c;
-    margin-bottom: 2px;
-}
-.hero-subtitle {
-    font-size: 1rem;
-    color: #6b7280;
-    margin-bottom: 8px;
-}
-.hero-stats {
-    font-size: 0.85rem;
-    color: #9ca3af;
-    margin-bottom: 0;
-}
+.lm-hero { padding: 8px 0 16px; }
+.lm-title { font-size: 28px; font-weight: 700; color: #111827; margin: 0; line-height: 1.2; }
+.lm-subtitle { font-size: 14px; color: #6b7280; margin-top: 4px; line-height: 1.4; }
+.lm-stats { display: inline-flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.lm-stat-pill { background: #eef2ff; color: #3730a3; padding: 4px 10px; border-radius: 999px;
+                font-size: 12px; font-weight: 500; }
+
+/* ---- Legacy hero aliases ---- */
+.hero-title    { font-size: 28px; font-weight: 700; color: #111827; margin-bottom: 2px; }
+.hero-subtitle { font-size: 14px; color: #6b7280; margin-bottom: 8px; line-height: 1.4; }
+.hero-stats    { font-size: 0.85rem; color: #9ca3af; margin-bottom: 0; }
 
 /* ---- Suggested follow-up chips ---- */
 .followup-label {
@@ -393,17 +440,55 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 /* ---- Progress badge row ---- */
 .badge {
     display: inline-block;
-    background: #eff6ff;
-    color: #1d4ed8;
+    background: #eef2ff;
+    color: #3730a3;
     border-radius: 999px;
-    padding: 2px 10px;
-    font-size: 0.78rem;
-    margin-right: 6px;
-    font-weight: 600;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    margin-right: 4px;
+    font-weight: 500;
 }
 .badge-warn {
     background: #fff7ed;
-    color: #c2410c;
+    color: #b45309;
+}
+
+/* ---- Progress bars — thinner ---- */
+[data-testid="stProgress"] > div > div > div > div {
+    height: 6px !important;
+}
+
+/* ---- Sidebar section headers ---- */
+[data-testid="stSidebar"] h3 {
+    font-size: 11px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280 !important;
+    font-weight: 600 !important;
+    margin-top: 18px !important;
+    margin-bottom: 6px !important;
+}
+
+/* ---- Chat input ---- */
+[data-testid="stChatInput"] textarea {
+    border-radius: 10px !important;
+    border: 1px solid #e5e7eb !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+/* ---- Buttons ---- */
+.stButton > button {
+    border-radius: 10px !important;
+    font-weight: 500 !important;
+    font-family: 'Inter', sans-serif !important;
+    border: 1px solid #e5e7eb !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    transition: all 0.15s ease;
+}
+.stButton > button:hover {
+    border-color: #5b6cff !important;
+    color: #5b6cff !important;
 }
 </style>
 """,
@@ -422,10 +507,14 @@ def _render_hero():
     artifact_str = f"{n_artifacts} artifacts" if n_artifacts else "artifacts"
     st.markdown(
         f"""
-<div style="padding: 12px 0 8px 0;">
-  <div class="hero-title">Learning Memory OS</div>
-  <div class="hero-subtitle">Context-routed tutor for ML systems engineers</div>
-  <div class="hero-stats">{n_topics} topics &nbsp;&bull;&nbsp; {artifact_str} &nbsp;&bull;&nbsp; Built for CS153, Stanford.</div>
+<div class="lm-hero">
+  <h1 class="lm-title">Learning Memory OS</h1>
+  <p class="lm-subtitle">Context-routed tutor for ML systems engineers</p>
+  <div class="lm-stats">
+    <span class="lm-stat-pill">{n_topics} topics</span>
+    <span class="lm-stat-pill">{artifact_str}</span>
+    <span class="lm-stat-pill">CS153</span>
+  </div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -530,9 +619,9 @@ def _render_right_pane(col, topic_id: str | None, student_id: str):
             frac = min(tokens_used / max(budget, 1), 1.0)
             st.progress(frac)
             pct = int(frac * 100)
-            color = "#1e8a4f" if pct < 60 else ("#c47a1a" if pct < 85 else "#c43a3a")
+            color = "#16a34a" if pct < 60 else ("#d97706" if pct < 85 else "#dc2626")
             st.markdown(
-                f"<span style='color:{color}; font-size:0.85rem;'>"
+                f"<span style='color:{color}; font-size:0.85rem; font-family:Inter,sans-serif;'>"
                 f"{tokens_used:,} / {budget:,} tokens ({pct}%)</span>",
                 unsafe_allow_html=True,
             )
@@ -586,19 +675,9 @@ def _render_right_pane(col, topic_id: str | None, student_id: str):
 
         # --- Show context analysis toggle ---
         if d:
-            if st.button("Show context analysis →", key="toggle_context"):
+            toggle_label = "Hide context analysis" if st.session_state.show_context_analysis else "Show context analysis"
+            if st.button(toggle_label, key="toggle_context"):
                 st.session_state.show_context_analysis = not st.session_state.show_context_analysis
-
-            # Most-recent turn's selected concepts (max 5, no scores)
-            if d["selected"]:
-                st.markdown("**This turn selected:**")
-                for it in d["selected"][:5]:
-                    st.markdown(
-                        f"<span style='font-size:0.8rem; color:#374151;'>• {it['title'][:40]}</span>",
-                        unsafe_allow_html=True,
-                    )
-                if len(d["selected"]) > 5:
-                    st.caption(f"+ {len(d['selected']) - 5} more (see analysis)")
 
 
 # ---------------------------------------------------------------------------
@@ -795,9 +874,9 @@ def _render_diagnostic_flow(
     # === PHASE: init — generate first diagnostic question ===
     if diag["phase"] == "init":
         st.markdown(
-            """<div class="diag-card">
-<strong>Let's understand what went wrong</strong><br>
-<span class="muted">Your score was below the threshold. Let me ask you a follow-up question to pinpoint the gap.</span>
+            """<div class="lm-card lm-diag-card">
+<div class="lm-card-header">🧭 Diagnosing</div>
+<span class="lm-muted">Your score was below the threshold. Let me ask you a follow-up question to pinpoint the gap.</span>
 </div>""",
             unsafe_allow_html=True,
         )
@@ -821,10 +900,10 @@ def _render_diagnostic_flow(
     # === PHASE: asking — show follow-up question, await student answer ===
     if diag["phase"] == "asking":
         st.markdown(
-            f"""<div class="diag-card">
-<strong>Let's understand what went wrong</strong><br>
-<span class="muted" style="font-size:0.85em;">Possible gap: <em>{diag["diagnosis"]}</em></span><br><br>
-<strong style="font-size:1.05em;">{diag["follow_up_question"]}</strong>
+            f"""<div class="lm-card lm-diag-card">
+<div class="lm-card-header">🧭 Diagnosing</div>
+<span class="lm-muted">Possible gap: <em>{diag["diagnosis"]}</em></span><br><br>
+<strong style="font-size:1.05em; color:#111827;">{diag["follow_up_question"]}</strong>
 </div>""",
             unsafe_allow_html=True,
         )
@@ -860,11 +939,11 @@ def _render_diagnostic_flow(
         next_action = diag.get("next_action", "wrap_up")
 
         st.markdown(
-            f"""<div class="diag-card">
-<strong>Here's what I think is happening</strong><br>
-<span class="muted">Confirmed gap: <em>{diag["confirmed_misconception"]}</em></span><br><br>
-{diag["explanation"]}<br><br>
-<em>{diag["next_message"]}</em>
+            f"""<div class="lm-card lm-diag-card">
+<div class="lm-card-header">🧭 Diagnosing</div>
+<span class="lm-muted">Confirmed gap: <em>{diag["confirmed_misconception"]}</em></span><br><br>
+<span style="color:#111827;">{diag["explanation"]}</span><br><br>
+<em class="lm-muted">{diag["next_message"]}</em>
 </div>""",
             unsafe_allow_html=True,
         )
@@ -938,9 +1017,10 @@ def _render_diagnostic_flow(
     # === PHASE: retesting — show the re-test question ===
     if diag["phase"] == "retesting":
         st.markdown(
-            f"""<div class="quiz-card">
-<strong>Re-test: let's see if the concept clicks now</strong><br><br>
-<span style="font-size:1.05em;">{diag["retest_question"]}</span>
+            f"""<div class="lm-card lm-quiz-card">
+<div class="lm-card-header">🎯 Re-test</div>
+<span class="lm-card-sub">Let's see if the concept clicks now</span><br><br>
+<span style="font-size:1.05em; color:#111827;">{diag["retest_question"]}</span>
 </div>""",
             unsafe_allow_html=True,
         )
@@ -976,15 +1056,15 @@ def _render_diagnostic_flow(
             # Re-test has been scored
             rs = diag["retest_score"]
             if rs >= DIAGNOSTIC_THRESHOLD:
-                score_cls = "score-good"
+                score_cls = "lm-score lm-score--good"
                 score_label = "Great improvement!"
             else:
-                score_cls = "score-bad"
+                score_cls = "lm-score lm-score--bad"
                 score_label = "Still needs work"
             bar_val = int(rs * 100)
             st.markdown(
                 f'<span class="{score_cls}">{bar_val}/100</span>'
-                f' <span class="muted">— {score_label}</span>',
+                f' <span class="lm-muted">— {score_label}</span>',
                 unsafe_allow_html=True,
             )
             # Log misconception regardless of re-test result
@@ -1008,7 +1088,7 @@ def _render_diagnostic_flow(
     # === PHASE: done ===
     if diag["phase"] == "done":
         st.markdown(
-            '<div class="diag-card"><span class="muted">Diagnostic session complete. '
+            '<div class="lm-card lm-diag-card"><span class="lm-muted">Diagnostic session complete. '
             "The misconception has been saved and will influence future tutoring.</span></div>",
             unsafe_allow_html=True,
         )
@@ -1056,9 +1136,9 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
 
     # Quiz card header
     st.markdown(
-        f"""<div class="quiz-card">
-<strong>Challenge</strong><br>
-<span style="font-size:1.08em; color:#1a1f3c;">{state["question"]}</span>
+        f"""<div class="lm-card lm-quiz-card">
+<div class="lm-card-header">🎯 Challenge</div>
+<span style="font-size:1.05em; color:#111827;">{state["question"]}</span>
 </div>""",
         unsafe_allow_html=True,
     )
@@ -1068,18 +1148,18 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
         score_val = state["score"]
         bar_val = int(score_val * 100)
         if score_val >= 0.8:
-            score_cls = "score-good"
+            score_cls = "lm-score lm-score--good"
         elif score_val >= DIAGNOSTIC_THRESHOLD:
-            score_cls = "score-mid"
+            score_cls = "lm-score lm-score--mid"
         else:
-            score_cls = "score-bad"
+            score_cls = "lm-score lm-score--bad"
 
         st.markdown(
             f'<span class="{score_cls}">{bar_val}/100</span>',
             unsafe_allow_html=True,
         )
         st.markdown(
-            f'<span class="muted">{state["rationale"]}</span>',
+            f'<span class="lm-muted">{state["rationale"]}</span>',
             unsafe_allow_html=True,
         )
 
