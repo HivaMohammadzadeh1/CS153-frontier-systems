@@ -196,10 +196,14 @@ body {
 }
 
 /* ---- Right drawer toggle button ---- */
-#drawer-toggle {
+#routingToggle {
   writing-mode: initial;
   transition: background 0.15s;
 }
+
+/* ---- Settings gear dropdown: hide default marker ---- */
+#settingsMenu > summary::-webkit-details-marker { display: none; }
+#settingsMenu > summary::marker { display: none; }
 
 /* ---- Collapsible sections ---- */
 .collapse-icon {

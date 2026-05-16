@@ -74,18 +74,62 @@ function sendSuggestion(btn) {
 }
 
 // ============================================================
+// New chat
+// ============================================================
+function startNewChat() {
+  state.messages = [];
+  state.reuseCounts = {};
+  state.lastDecision = null;
+  const chatEl = $("chat-history");
+  if (chatEl) chatEl.innerHTML = "";
+  // Re-insert welcome card
+  const welcome = document.createElement("div");
+  welcome.id = "welcome-card";
+  welcome.className = "max-w-2xl mx-auto";
+  welcome.innerHTML = `
+    <div class="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 text-center">
+      <div class="w-12 h-12 bg-indigo-100 rounded-2xl mx-auto flex items-center justify-center mb-3">
+        <svg class="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+      </div>
+      <h2 class="text-lg font-semibold text-slate-900 mb-1">ML Systems Tutor</h2>
+      <p class="text-sm text-slate-500 mb-4">Ask me anything about transformers, training, inference, or ML systems engineering.</p>
+      <div class="flex flex-wrap justify-center gap-2">
+        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">What is KV caching and why does it matter?</button>
+        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">Explain flash attention vs vanilla attention</button>
+        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">How does pipeline parallelism work?</button>
+        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">Walk me through the transformer architecture</button>
+      </div>
+    </div>`;
+  if (chatEl) chatEl.appendChild(welcome);
+  // Reset routing drawer content
+  const routingContent = $("routing-content");
+  if (routingContent) {
+    routingContent.innerHTML = `<div class="text-xs text-slate-400 text-center py-8">Ask a question to see routing details.</div>`;
+  }
+  $("chat-input")?.focus();
+}
+window.startNewChat = startNewChat;
+
+// ============================================================
 // Routing drawer toggle
 // ============================================================
-function toggleDrawer() {
+function toggleRoutingDrawer() {
   const drawer = $("right-drawer");
-  if (drawer.classList.contains("hidden") || drawer.style.display === "none") {
-    drawer.style.display = "flex";
-    drawer.style.flexDirection = "column";
+  const btn = $("routingToggle");
+  if (!drawer || !btn) return;
+  const isOpen = !drawer.classList.contains("hidden");
+  if (isOpen) {
+    drawer.classList.add("hidden");
+    btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10" /></svg> Show routing`;
   } else {
-    drawer.style.display = "none";
+    drawer.classList.remove("hidden");
+    btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10" /></svg> Hide routing`;
   }
 }
-// Expose globally
+// Legacy alias (used from showRefDetail which opens the drawer directly)
+function toggleDrawer() { toggleRoutingDrawer(); }
 window.toggleDrawer = toggleDrawer;
 
 // ============================================================
@@ -696,10 +740,11 @@ window.showRefDetail = function (msgIdx, refId) {
     || msg.dropped?.find((it) => it.id === refId);
   if (!item) return;
 
-  // Show in routing drawer
+  // Show in routing drawer (open it if closed)
   const drawer = $("right-drawer");
-  drawer.style.display = "flex";
-  drawer.style.flexDirection = "column";
+  if (drawer.classList.contains("hidden")) {
+    toggleRoutingDrawer();
+  }
   const content = $("routing-content");
   content.innerHTML = `
     <div class="mb-3">
@@ -903,7 +948,7 @@ function escapeHtml(str) {
 }
 
 // ============================================================
-// Header controls
+// Header / settings controls
 // ============================================================
 $("budget-slider").addEventListener("input", (e) => {
   state.budget = parseInt(e.target.value, 10);
@@ -937,6 +982,12 @@ $("student-id").addEventListener("change", (e) => {
   state.reuseCounts = {};  // reset reuse on student switch
   refreshStudentState();
 });
+
+// New chat + routing drawer toggle
+$("newChatBtn")?.addEventListener("click", startNewChat);
+$("newChatBtnLeft")?.addEventListener("click", startNewChat);
+$("routingToggle")?.addEventListener("click", toggleRoutingDrawer);
+$("routingClose")?.addEventListener("click", toggleRoutingDrawer);
 
 // ============================================================
 // Bootstrap
