@@ -326,7 +326,7 @@ def _init_session():
 
 
 def _inject_css():
-    st.markdown(
+    st.html(
         """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -491,8 +491,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     color: #5b6cff !important;
 }
 </style>
-""",
-        unsafe_allow_html=True,
+"""
     )
 
 
