@@ -36,10 +36,21 @@ except ImportError:
     _MERMAID_OK = False
 
 
-st.set_page_config(page_title="Learning Memory OS", layout="wide")
+st.set_page_config(
+    page_title="Learning Memory OS",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # ---------------------------------------------------------------------------
-# Quiz generation schema (tool-use mode — no free-form JSON parsing)
+# Threshold configuration
+# ---------------------------------------------------------------------------
+
+DIAGNOSTIC_THRESHOLD = 0.6   # scores below this trigger the diagnostic flow
+DIAGNOSTIC_MAX_TURNS = 3     # max back-and-forth turns in diagnostic loop
+
+# ---------------------------------------------------------------------------
+# Tool-use schemas
 # ---------------------------------------------------------------------------
 
 QUIZ_QUESTION_SCHEMA = {
@@ -49,6 +60,35 @@ QUIZ_QUESTION_SCHEMA = {
         "rubric": {"type": "string", "description": "What a correct answer to this question must contain."},
     },
     "required": ["question", "rubric"],
+}
+
+DIAGNOSTIC_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "diagnosis": {
+            "type": "string",
+            "description": "One sentence guessing what the student misunderstands.",
+        },
+        "follow_up_question": {
+            "type": "string",
+            "description": "A probing question that, if answered correctly, confirms or refutes the diagnosis.",
+        },
+    },
+    "required": ["diagnosis", "follow_up_question"],
+}
+
+EXPLAIN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "confirmed_misconception": {"type": "string"},
+        "explanation": {"type": "string"},
+        "next_action": {
+            "type": "string",
+            "enum": ["explain", "re_test", "wrap_up"],
+        },
+        "next_message": {"type": "string"},
+    },
+    "required": ["confirmed_misconception", "explanation", "next_action", "next_message"],
 }
 
 # ---------------------------------------------------------------------------
@@ -181,22 +221,14 @@ _MERMAID_FENCE_RE = re.compile(
 
 
 def _render_with_mermaid(text: str) -> None:
-    """Render text that may contain ```mermaid blocks.
-
-    Non-mermaid chunks go to st.markdown; mermaid blocks go to st_mermaid
-    (or a plain code block if the library is unavailable).
-    """
+    """Render text that may contain ```mermaid blocks."""
     parts = _MERMAID_FENCE_RE.split(text)
-    # split() with one group: [before, diagram1, after_diagram1, diagram2, ...]
-    # even indices = plain text, odd indices = mermaid diagram code
     for i, part in enumerate(parts):
         if not part:
             continue
         if i % 2 == 0:
-            # Plain text chunk
             st.markdown(part)
         else:
-            # Mermaid diagram
             if _MERMAID_OK:
                 try:
                     st_mermaid(part.strip(), height=350)
@@ -207,7 +239,7 @@ def _render_with_mermaid(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cached singletons (one per server process, shared across reruns/sessions)
+# Cached singletons
 # ---------------------------------------------------------------------------
 
 
@@ -227,6 +259,29 @@ def _llm_and_embedder():
     return LLM(api_key=s.anthropic_api_key), Embedder(api_key=s.openai_api_key)
 
 
+@st.cache_resource
+def _artifact_count() -> int:
+    """Total number of semantic artifacts in the DB (fetched once at startup)."""
+    conn = _new_conn()
+    try:
+        semantic = SemanticStore(conn)
+        # Use a broad vector search with zero embedding to count artifacts
+        # Fall back to counting topics * average
+        topics = _topics()
+        total = 0
+        for t in topics:
+            try:
+                items = semantic.by_topic(t.id)
+                total += len(items)
+            except Exception:
+                pass
+        return total
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
 def _new_conn():
     """Open a short-lived DB connection (used in try/finally blocks)."""
     return connect(_settings().database_url)
@@ -239,22 +294,143 @@ def _new_conn():
 
 def _init_session():
     if "messages" not in st.session_state:
-        st.session_state.messages = []  # list[{"role": str, "content": str}]
+        st.session_state.messages = []
     if "last_decision" not in st.session_state:
-        st.session_state.last_decision = None  # dict filled after each turn
+        st.session_state.last_decision = None
     if "reuse_counts" not in st.session_state:
         st.session_state.reuse_counts = Counter()
     if "confirm_clear" not in st.session_state:
         st.session_state.confirm_clear = False
-    # Track which concept ids have been selected per topic this session
     if "seen_concepts_by_topic" not in st.session_state:
-        st.session_state.seen_concepts_by_topic = {}  # topic_id -> set[concept_id]
-    # Quiz state: keyed by message index
+        st.session_state.seen_concepts_by_topic = {}
     if "quiz_state" not in st.session_state:
-        st.session_state.quiz_state = {}  # msg_idx -> {"question":..., "rubric":..., "answer":..., "score":...}
-    # Pending starter prompt (set when a chip is clicked)
+        st.session_state.quiz_state = {}
+    if "diagnostic" not in st.session_state:
+        st.session_state.diagnostic = {}  # msg_idx -> diagnostic state dict
     if "pending_prompt" not in st.session_state:
         st.session_state.pending_prompt = None
+    if "show_context_analysis" not in st.session_state:
+        st.session_state.show_context_analysis = False
+
+
+# ---------------------------------------------------------------------------
+# Global CSS injection
+# ---------------------------------------------------------------------------
+
+
+def _inject_css():
+    st.markdown(
+        """
+<style>
+/* ---- Base ---- */
+.stApp { background: #fafbff; }
+
+/* ---- Rounded borders on containers ---- */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 14px !important;
+    box-shadow: 0 1px 4px rgba(50, 60, 100, 0.07);
+}
+
+/* ---- Chat message bubbles ---- */
+[data-testid="stChatMessage"] {
+    border-radius: 16px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+}
+
+/* ---- Quiz card (yellow/orange gradient) ---- */
+.quiz-card {
+    background: linear-gradient(135deg, #fff8e1, #fff3d6);
+    border-left: 4px solid #ff9a3c;
+    padding: 16px 18px;
+    border-radius: 12px;
+    margin: 12px 0;
+}
+
+/* ---- Diagnostic card (deeper orange) ---- */
+.diag-card {
+    background: linear-gradient(135deg, #fff4e6, #ffe9d6);
+    border-left: 4px solid #ff6f3c;
+    padding: 16px 18px;
+    border-radius: 12px;
+    margin: 12px 0;
+}
+
+/* ---- Score colours ---- */
+.score-good { color: #1e8a4f; font-weight: 700; font-size: 28px; }
+.score-mid  { color: #c47a1a; font-weight: 700; font-size: 28px; }
+.score-bad  { color: #c43a3a; font-weight: 700; font-size: 28px; }
+
+/* ---- Muted / italic helpers ---- */
+.muted      { color: #6b7280; font-size: 0.9em; font-style: italic; }
+.ref-list   { font-size: 0.85em; color: #4b5563; }
+
+/* ---- Hero header ---- */
+.hero-title {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #1a1f3c;
+    margin-bottom: 2px;
+}
+.hero-subtitle {
+    font-size: 1rem;
+    color: #6b7280;
+    margin-bottom: 8px;
+}
+.hero-stats {
+    font-size: 0.85rem;
+    color: #9ca3af;
+    margin-bottom: 0;
+}
+
+/* ---- Suggested follow-up chips ---- */
+.followup-label {
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin-bottom: 4px;
+}
+
+/* ---- Progress badge row ---- */
+.badge {
+    display: inline-block;
+    background: #eff6ff;
+    color: #1d4ed8;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.78rem;
+    margin-right: 6px;
+    font-weight: 600;
+}
+.badge-warn {
+    background: #fff7ed;
+    color: #c2410c;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hero header
+# ---------------------------------------------------------------------------
+
+
+def _render_hero():
+    n_topics = len(_topics())
+    n_artifacts = _artifact_count()
+    artifact_str = f"{n_artifacts} artifacts" if n_artifacts else "artifacts"
+    st.markdown(
+        f"""
+<div style="padding: 12px 0 8px 0;">
+  <div class="hero-title">Learning Memory OS</div>
+  <div class="hero-subtitle">Context-routed tutor for ML systems engineers</div>
+  <div class="hero-stats">{n_topics} topics &nbsp;&bull;&nbsp; {artifact_str} &nbsp;&bull;&nbsp; Built for CS153, Stanford.</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -263,8 +439,9 @@ def _init_session():
 
 
 def _render_left_sidebar(student_id_default: str = "demo-user"):
-    st.sidebar.title("Learning Memory OS")
+    st.sidebar.markdown("### Learning Memory OS")
     st.sidebar.caption("CS 153 — context-routed tutor demo")
+    st.sidebar.divider()
 
     student_id = st.sidebar.text_input("Student ID", value=student_id_default)
 
@@ -279,7 +456,7 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
 
     st.sidebar.divider()
 
-    # Student mastery + misconceptions (short-lived connection, read-only)
+    # Student mastery + misconceptions
     conn = _new_conn()
     try:
         student_store = StudentStore(conn)
@@ -297,13 +474,15 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
     else:
         st.sidebar.caption("(no mastery recorded yet)")
 
+    st.sidebar.divider()
+
     st.sidebar.subheader("Active misconceptions")
     if misconceptions:
         for m in misconceptions[:5]:
             desc = m["description"] or ""
             st.sidebar.write(f"- {desc[:80]}{'...' if len(desc) > 80 else ''}")
     else:
-        st.sidebar.caption("(none)")
+        st.sidebar.caption("(none detected yet)")
 
     st.sidebar.divider()
 
@@ -322,7 +501,9 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
             st.session_state.confirm_clear = False
             st.session_state.seen_concepts_by_topic = {}
             st.session_state.quiz_state = {}
+            st.session_state.diagnostic = {}
             st.session_state.pending_prompt = None
+            st.session_state.show_context_analysis = False
             st.rerun()
         if c2.button("Cancel"):
             st.session_state.confirm_clear = False
@@ -332,32 +513,38 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
 
 
 # ---------------------------------------------------------------------------
-# Right routing panel
+# Right pane — compact stats + toggle
 # ---------------------------------------------------------------------------
 
 
-def _render_routing_panel(col, topic_id: str | None):
-    """Render the routing panel in the right column."""
-
+def _render_right_pane(col, topic_id: str | None, student_id: str):
+    """Minimal right pane: gauge + progress + badges + toggle."""
     d = st.session_state.last_decision
 
-    # --- Concepts touched this turn (always visible) ---
-    col.subheader("Concepts touched this turn")
-    if d is None:
-        col.caption("Ask a question to see what the routing engine selected.")
-    else:
-        if d["selected"]:
-            for it in d["selected"]:
-                col.write(f"- {it['title']}")
+    with col:
+        # --- Token usage "gauge" (horizontal bar + label) ---
+        st.markdown("**Token usage**")
+        if d:
+            tokens_used = d["tokens_used"]
+            budget = d["budget"]
+            frac = min(tokens_used / max(budget, 1), 1.0)
+            st.progress(frac)
+            pct = int(frac * 100)
+            color = "#1e8a4f" if pct < 60 else ("#c47a1a" if pct < 85 else "#c43a3a")
+            st.markdown(
+                f"<span style='color:{color}; font-size:0.85rem;'>"
+                f"{tokens_used:,} / {budget:,} tokens ({pct}%)</span>",
+                unsafe_allow_html=True,
+            )
         else:
-            col.caption("(no items selected — candidates list was empty)")
+            st.progress(0.0)
+            st.caption("Ask a question to see usage.")
 
-        # --- Progress stat ---
-        col.subheader("Your progress")
+        st.divider()
+
+        # --- Concept progress ---
         seen_ids = st.session_state.seen_concepts_by_topic.get(topic_id or "_global", set())
         n_seen = len(seen_ids)
-
-        # Count total concept-type artifacts for this topic
         n_total = 0
         if topic_id:
             conn = _new_conn()
@@ -368,89 +555,467 @@ def _render_routing_panel(col, topic_id: str | None):
             finally:
                 conn.close()
 
-        topic_label = topic_id or "global"
+        st.markdown("**Concepts covered**")
         if n_total > 0:
-            col.write(f"Topic: **{topic_label}**  •  Concepts covered: **{n_seen} / {n_total}**")
-            col.progress(min(n_seen / n_total, 1.0))
+            frac_c = min(n_seen / n_total, 1.0)
+            st.progress(frac_c)
+            st.caption(f"{n_seen} / {n_total} in {topic_id or 'session'}")
         else:
-            col.write(f"Topic: **{topic_label}**  •  Concepts covered: **{n_seen}**")
+            st.caption(f"{n_seen} touched this session")
 
-    # --- Collapsed diagnostics ---
-    with col.expander("🔍 How this answer was built", expanded=False):
-        if d is None:
-            st.caption("No routing data yet.")
-        else:
-            n_sel = len(d["selected"])
-            n_total_items = n_sel + len(d["dropped"])
-            st.metric("Items selected", f"{n_sel} / {n_total_items}")
-            st.metric("Tokens used", f"{d['tokens_used']} / {d['budget']}")
+        st.divider()
 
-            st.markdown("**Selected items (with scores)**")
-            if not d["selected"]:
-                st.caption("(no items selected)")
-            for it in d["selected"]:
+        # --- Badges ---
+        conn = _new_conn()
+        try:
+            student_store = StudentStore(conn)
+            misconceptions = student_store.active_misconceptions(student_id)
+            mastery = student_store.mastery_for(student_id)
+        finally:
+            conn.close()
+
+        n_mastered = sum(1 for m in mastery if m.score >= 0.8)
+        n_misc = len(misconceptions)
+        badge_html = (
+            f'<span class="badge">{n_mastered} mastered</span>'
+            f'<span class="badge badge-warn">{n_misc} misconception{"s" if n_misc != 1 else ""}</span>'
+        )
+        st.markdown(badge_html, unsafe_allow_html=True)
+
+        st.divider()
+
+        # --- Show context analysis toggle ---
+        if d:
+            if st.button("Show context analysis →", key="toggle_context"):
+                st.session_state.show_context_analysis = not st.session_state.show_context_analysis
+
+            # Most-recent turn's selected concepts (max 5, no scores)
+            if d["selected"]:
+                st.markdown("**This turn selected:**")
+                for it in d["selected"][:5]:
+                    st.markdown(
+                        f"<span style='font-size:0.8rem; color:#374151;'>• {it['title'][:40]}</span>",
+                        unsafe_allow_html=True,
+                    )
+                if len(d["selected"]) > 5:
+                    st.caption(f"+ {len(d['selected']) - 5} more (see analysis)")
+
+
+# ---------------------------------------------------------------------------
+# Context analysis expander (full routing diagnostics)
+# ---------------------------------------------------------------------------
+
+
+def _render_context_analysis():
+    """Full routing diagnostics, shown only when user requests it."""
+    d = st.session_state.last_decision
+    if not d or not st.session_state.show_context_analysis:
+        return
+
+    with st.expander("Context analysis — how this answer was built", expanded=True):
+        n_sel = len(d["selected"])
+        n_total_items = n_sel + len(d["dropped"])
+        c1, c2 = st.columns(2)
+        c1.metric("Items selected", f"{n_sel} / {n_total_items}")
+        c2.metric("Tokens used", f"{d['tokens_used']} / {d['budget']}")
+
+        st.markdown("**Selected items (with scores)**")
+        if not d["selected"]:
+            st.caption("(no items selected)")
+        for it in d["selected"]:
+            score = d["scores"].get(it["id"])
+            label = f"`{it['id'][:8]}` — {it['title'][:48]}"
+            with st.expander(label):
+                if score:
+                    st.write(
+                        f"**total {score['total']:.3f}** = "
+                        f"rel {score['relevance']:.2f} + "
+                        f"rec {score['recency']:.2f} + "
+                        f"misc {score['misconception']:.2f} + "
+                        f"prereq {score['prerequisite']:.2f} + "
+                        f"reuse {score['reuse']:.2f}"
+                    )
+                st.caption(it["body"][:300] + ("..." if len(it["body"]) > 300 else ""))
+
+        if d["dropped"]:
+            st.markdown("**Dropped (over budget)**")
+            dropped_sorted = sorted(
+                d["dropped"],
+                key=lambda x: d["scores"].get(x["id"], {}).get("total", 0.0),
+                reverse=True,
+            )[:5]
+            for it in dropped_sorted:
                 score = d["scores"].get(it["id"])
                 label = f"`{it['id'][:8]}` — {it['title'][:48]}"
                 with st.expander(label):
                     if score:
                         st.write(
-                            f"**total {score['total']:.3f}** = "
-                            f"rel {score['relevance']:.2f} + "
-                            f"rec {score['recency']:.2f} + "
-                            f"misc {score['misconception']:.2f} + "
-                            f"prereq {score['prerequisite']:.2f} + "
-                            f"reuse {score['reuse']:.2f}"
+                            f"total **{score['total']:.3f}** — "
+                            f"would cost {it['token_estimate']} tokens"
                         )
-                    st.caption(it["body"][:300] + ("..." if len(it["body"]) > 300 else ""))
-
-            if d["dropped"]:
-                st.markdown("**Dropped (over budget)**")
-                dropped_sorted = sorted(
-                    d["dropped"],
-                    key=lambda x: d["scores"].get(x["id"], {}).get("total", 0.0),
-                    reverse=True,
-                )[:5]
-                for it in dropped_sorted:
-                    score = d["scores"].get(it["id"])
-                    label = f"`{it['id'][:8]}` — {it['title'][:48]}"
-                    with st.expander(label):
-                        if score:
-                            st.write(
-                                f"total **{score['total']:.3f}** — "
-                                f"would cost {it['token_estimate']} tokens"
-                            )
-                        st.caption(it["body"][:200] + ("..." if len(it["body"]) > 200 else ""))
+                    st.caption(it["body"][:200] + ("..." if len(it["body"]) > 200 else ""))
 
 
 # ---------------------------------------------------------------------------
-# Progress bar (shown below welcome / above first message)
+# Diagnostic chat state machine
 # ---------------------------------------------------------------------------
 
 
-def _render_progress_bar(topic_id: str | None):
-    seen_ids = st.session_state.seen_concepts_by_topic.get(topic_id or "_global", set())
-    n_seen = len(seen_ids)
+def _generate_diagnostic_question(
+    original_question: str,
+    rubric: str,
+    student_answer: str,
+    score: float,
+) -> dict:
+    """Call LLM to generate the initial diagnosis + follow-up question."""
+    llm, _ = _llm_and_embedder()
+    system = (
+        "You are an expert ML systems tutor diagnosing a student misconception. "
+        "The student just answered a quiz question poorly. "
+        "Your job is to identify what they likely misunderstand and ask a targeted probing question."
+    )
+    user = (
+        f"ORIGINAL QUESTION: {original_question}\n\n"
+        f"RUBRIC: {rubric}\n\n"
+        f"STUDENT ANSWER: {student_answer}\n\n"
+        f"SCORE: {score:.2f} / 1.0\n\n"
+        "Based on the student's answer, diagnose the most likely misconception and craft a follow-up question."
+    )
+    return llm.complete_with_schema(
+        system=system,
+        user=user,
+        schema=DIAGNOSTIC_SCHEMA,
+        tool_name="submit_diagnosis",
+        tool_description="Submit the diagnosis and follow-up question.",
+    )
 
-    n_total = 0
-    if topic_id:
-        conn = _new_conn()
-        try:
-            semantic = SemanticStore(conn)
-            all_items = semantic.by_topic(topic_id)
-            n_total = sum(1 for it in all_items if it.artifact_type == "concept")
-        finally:
-            conn.close()
 
-    if n_total > 0:
-        fraction = min(n_seen / n_total, 1.0)
-        st.progress(fraction)
-        st.caption(f"Concepts touched in this topic: {n_seen} / {n_total}")
-    elif n_seen > 0:
-        st.caption(f"Concepts touched this session: {n_seen}")
+def _generate_explanation(
+    original_question: str,
+    diagnosis: str,
+    follow_up_question: str,
+    follow_up_answer: str,
+) -> dict:
+    """Given the student's follow-up answer, generate an explanation or wrap-up."""
+    llm, _ = _llm_and_embedder()
+    system = (
+        "You are an expert ML systems tutor. A student answered a diagnostic follow-up question. "
+        "Evaluate their answer to confirm or refute the initial diagnosis. "
+        "Then decide: explain the correct mental model, request a re-test, or wrap up if they got it."
+    )
+    user = (
+        f"ORIGINAL QUIZ QUESTION: {original_question}\n\n"
+        f"INITIAL DIAGNOSIS: {diagnosis}\n\n"
+        f"DIAGNOSTIC FOLLOW-UP: {follow_up_question}\n\n"
+        f"STUDENT'S FOLLOW-UP ANSWER: {follow_up_answer}\n\n"
+        "Respond with a confirmed misconception label, explanation, next_action (explain/re_test/wrap_up), "
+        "and a student-facing next_message."
+    )
+    return llm.complete_with_schema(
+        system=system,
+        user=user,
+        schema=EXPLAIN_SCHEMA,
+        tool_name="submit_explanation",
+        tool_description="Submit the confirmed misconception, explanation, and next action.",
+    )
+
+
+def _generate_retest_question(topic_id: str | None, confirmed_misconception: str) -> dict:
+    """Generate a targeted re-test question focused on the confirmed misconception."""
+    llm, _ = _llm_and_embedder()
+    topic_label = topic_id or "ML systems engineering"
+    return llm.complete_with_schema(
+        system=(
+            "Generate ONE targeted quiz question that directly tests whether the student "
+            f"has overcome this misconception: {confirmed_misconception}\n"
+            f"Topic area: {topic_label}"
+        ),
+        user=f"Create a question that reveals whether the student now understands: {confirmed_misconception}",
+        schema=QUIZ_QUESTION_SCHEMA,
+        tool_name="submit_retest_question",
+        tool_description="Submit the re-test question and rubric.",
+    )
+
+
+def _record_misconception_to_db(
+    student_id: str,
+    confirmed_misconception: str,
+    original_question: str,
+    topic_id: str | None,
+) -> str | None:
+    """Persist the misconception to the database and return its ID."""
+    conn = _new_conn()
+    try:
+        student_store = StudentStore(conn)
+        misconception_id = student_store.record_misconception(
+            student_id,
+            concept_id=None,
+            description=confirmed_misconception,
+            evidence=original_question,
+        )
+        conn.commit()
+        return misconception_id
+    except Exception as exc:
+        st.warning(f"Could not persist misconception: {exc}")
+        return None
+    finally:
+        conn.close()
+
+
+def _render_diagnostic_flow(
+    quiz_key: str,
+    msg_idx: int,
+    topic_id: str | None,
+    student_id: str,
+):
+    """Render the full diagnostic chat state machine for a low-scoring quiz attempt."""
+    state = st.session_state.quiz_state[quiz_key]
+    diag_key = quiz_key  # reuse same key for diagnostic state
+    diag = st.session_state.diagnostic.get(diag_key)
+
+    # Initialise diagnostic state if not yet started
+    if diag is None:
+        diag = {
+            "phase": "init",
+            "turns": 0,
+            "diagnosis": None,
+            "follow_up_question": None,
+            "confirmed_misconception": None,
+            "explanation": None,
+            "next_action": None,
+            "next_message": None,
+            "retest_question": None,
+            "retest_rubric": None,
+            "retest_answer": None,
+            "retest_score": None,
+            "misconception_id": None,
+        }
+        st.session_state.diagnostic[diag_key] = diag
+
+    # === PHASE: init — generate first diagnostic question ===
+    if diag["phase"] == "init":
+        st.markdown(
+            """<div class="diag-card">
+<strong>Let's understand what went wrong</strong><br>
+<span class="muted">Your score was below the threshold. Let me ask you a follow-up question to pinpoint the gap.</span>
+</div>""",
+            unsafe_allow_html=True,
+        )
+        with st.spinner("Generating diagnostic question..."):
+            try:
+                result = _generate_diagnostic_question(
+                    original_question=state["question"],
+                    rubric=state["rubric"],
+                    student_answer=state["answer"] or "",
+                    score=state["score"],
+                )
+                diag["diagnosis"] = result["diagnosis"]
+                diag["follow_up_question"] = result["follow_up_question"]
+                diag["phase"] = "asking"
+                st.session_state.diagnostic[diag_key] = diag
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not generate diagnostic question: {exc}")
+                return
+
+    # === PHASE: asking — show follow-up question, await student answer ===
+    if diag["phase"] == "asking":
+        st.markdown(
+            f"""<div class="diag-card">
+<strong>Let's understand what went wrong</strong><br>
+<span class="muted" style="font-size:0.85em;">Possible gap: <em>{diag["diagnosis"]}</em></span><br><br>
+<strong style="font-size:1.05em;">{diag["follow_up_question"]}</strong>
+</div>""",
+            unsafe_allow_html=True,
+        )
+        with st.form(key=f"diag_form_{msg_idx}"):
+            followup_ans = st.text_area(
+                "Your response:", key=f"diag_answer_{msg_idx}", height=100
+            )
+            submitted = st.form_submit_button("Submit response")
+
+        if submitted and followup_ans.strip():
+            diag["turns"] += 1
+            with st.spinner("Analysing your response..."):
+                try:
+                    result = _generate_explanation(
+                        original_question=state["question"],
+                        diagnosis=diag["diagnosis"],
+                        follow_up_question=diag["follow_up_question"],
+                        follow_up_answer=followup_ans.strip(),
+                    )
+                    diag["confirmed_misconception"] = result["confirmed_misconception"]
+                    diag["explanation"] = result["explanation"]
+                    diag["next_action"] = result["next_action"]
+                    diag["next_message"] = result["next_message"]
+                    diag["phase"] = "explaining"
+                    st.session_state.diagnostic[diag_key] = diag
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not analyse response: {exc}")
+                    return
+
+    # === PHASE: explaining — show the explanation and act on next_action ===
+    if diag["phase"] == "explaining":
+        next_action = diag.get("next_action", "wrap_up")
+
+        st.markdown(
+            f"""<div class="diag-card">
+<strong>Here's what I think is happening</strong><br>
+<span class="muted">Confirmed gap: <em>{diag["confirmed_misconception"]}</em></span><br><br>
+{diag["explanation"]}<br><br>
+<em>{diag["next_message"]}</em>
+</div>""",
+            unsafe_allow_html=True,
+        )
+
+        if next_action == "wrap_up" or diag["turns"] >= DIAGNOSTIC_MAX_TURNS:
+            # Record the misconception and mark done
+            if diag["misconception_id"] is None:
+                misc_id = _record_misconception_to_db(
+                    student_id=student_id,
+                    confirmed_misconception=diag["confirmed_misconception"],
+                    original_question=state["question"],
+                    topic_id=topic_id,
+                )
+                diag["misconception_id"] = misc_id
+            diag["phase"] = "done"
+            st.session_state.diagnostic[diag_key] = diag
+            st.success(
+                "Misconception logged. It will now appear in your sidebar and influence future question selection."
+            )
+
+        elif next_action == "re_test":
+            if diag["retest_question"] is None:
+                with st.spinner("Generating a targeted re-test question..."):
+                    try:
+                        rq = _generate_retest_question(
+                            topic_id=topic_id,
+                            confirmed_misconception=diag["confirmed_misconception"],
+                        )
+                        diag["retest_question"] = rq["question"]
+                        diag["retest_rubric"] = rq["rubric"]
+                        diag["phase"] = "retesting"
+                        st.session_state.diagnostic[diag_key] = diag
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not generate re-test: {exc}")
+                        return
+            else:
+                diag["phase"] = "retesting"
+                st.session_state.diagnostic[diag_key] = diag
+                st.rerun()
+
+        elif next_action == "explain":
+            # Another turn of explanation — prompt student for confirmation
+            if diag["turns"] < DIAGNOSTIC_MAX_TURNS:
+                with st.form(key=f"diag_confirm_form_{msg_idx}"):
+                    confirm_ans = st.text_area(
+                        "Does this make sense? Tell me in your own words or ask a follow-up:",
+                        key=f"diag_confirm_{msg_idx}",
+                        height=80,
+                    )
+                    confirm_submitted = st.form_submit_button("Continue")
+                if confirm_submitted and confirm_ans.strip():
+                    diag["turns"] += 1
+                    # Treat this as another asking turn
+                    diag["follow_up_question"] = confirm_ans.strip()
+                    diag["phase"] = "asking"
+                    st.session_state.diagnostic[diag_key] = diag
+                    st.rerun()
+            else:
+                if diag["misconception_id"] is None:
+                    misc_id = _record_misconception_to_db(
+                        student_id=student_id,
+                        confirmed_misconception=diag["confirmed_misconception"],
+                        original_question=state["question"],
+                        topic_id=topic_id,
+                    )
+                    diag["misconception_id"] = misc_id
+                diag["phase"] = "done"
+                st.session_state.diagnostic[diag_key] = diag
+
+    # === PHASE: retesting — show the re-test question ===
+    if diag["phase"] == "retesting":
+        st.markdown(
+            f"""<div class="quiz-card">
+<strong>Re-test: let's see if the concept clicks now</strong><br><br>
+<span style="font-size:1.05em;">{diag["retest_question"]}</span>
+</div>""",
+            unsafe_allow_html=True,
+        )
+
+        if diag.get("retest_score") is None:
+            with st.form(key=f"retest_form_{msg_idx}"):
+                retest_ans = st.text_area(
+                    "Your answer:", key=f"retest_answer_{msg_idx}", height=100
+                )
+                retest_submitted = st.form_submit_button("Submit re-test answer")
+
+            if retest_submitted and retest_ans.strip():
+                with st.spinner("Grading re-test..."):
+                    llm, _ = _llm_and_embedder()
+                    qq = QuizQuestion(
+                        question=diag["retest_question"],
+                        rubric=diag["retest_rubric"],
+                    )
+                    try:
+                        quiz_score = score_answer(
+                            question=qq,
+                            student_answer=retest_ans.strip(),
+                            judge_llm=llm,
+                        )
+                        diag["retest_answer"] = retest_ans.strip()
+                        diag["retest_score"] = quiz_score.score
+                        st.session_state.diagnostic[diag_key] = diag
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Re-test grading failed: {exc}")
+                        return
+        else:
+            # Re-test has been scored
+            rs = diag["retest_score"]
+            if rs >= DIAGNOSTIC_THRESHOLD:
+                score_cls = "score-good"
+                score_label = "Great improvement!"
+            else:
+                score_cls = "score-bad"
+                score_label = "Still needs work"
+            bar_val = int(rs * 100)
+            st.markdown(
+                f'<span class="{score_cls}">{bar_val}/100</span>'
+                f' <span class="muted">— {score_label}</span>',
+                unsafe_allow_html=True,
+            )
+            # Log misconception regardless of re-test result
+            if diag["misconception_id"] is None:
+                misc_id = _record_misconception_to_db(
+                    student_id=student_id,
+                    confirmed_misconception=diag["confirmed_misconception"],
+                    original_question=state["question"],
+                    topic_id=topic_id,
+                )
+                diag["misconception_id"] = misc_id
+            if rs >= DIAGNOSTIC_THRESHOLD:
+                st.success("Misconception logged and you demonstrated improvement. Keep it up!")
+            else:
+                st.warning(
+                    "Misconception logged for future sessions. This concept will be revisited proactively."
+                )
+            diag["phase"] = "done"
+            st.session_state.diagnostic[diag_key] = diag
+
+    # === PHASE: done ===
+    if diag["phase"] == "done":
+        st.markdown(
+            '<div class="diag-card"><span class="muted">Diagnostic session complete. '
+            "The misconception has been saved and will influence future tutoring.</span></div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
-# Quiz button + flow
+# Quiz button + flow (redesigned)
 # ---------------------------------------------------------------------------
 
 
@@ -460,7 +1025,7 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
     state = st.session_state.quiz_state.get(quiz_key, {})
 
     if not state:
-        if st.button("🎯 Test yourself", key=f"quiz_btn_{msg_idx}"):
+        if st.button("Test yourself", key=f"quiz_btn_{msg_idx}"):
             with st.spinner("Generating a quiz question..."):
                 llm, _ = _llm_and_embedder()
                 topic_label = topic_id or "ML systems engineering"
@@ -489,25 +1054,49 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
                 st.rerun()
         return
 
-    # Question is ready
-    st.info(f"**Quiz:** {state['question']}")
+    # Quiz card header
+    st.markdown(
+        f"""<div class="quiz-card">
+<strong>Challenge</strong><br>
+<span style="font-size:1.08em; color:#1a1f3c;">{state["question"]}</span>
+</div>""",
+        unsafe_allow_html=True,
+    )
 
     if state.get("score") is not None:
-        # Already scored
+        # Already scored — render score with colour
         score_val = state["score"]
         bar_val = int(score_val * 100)
-        color = "green" if score_val >= 0.7 else ("orange" if score_val >= 0.4 else "red")
+        if score_val >= 0.8:
+            score_cls = "score-good"
+        elif score_val >= DIAGNOSTIC_THRESHOLD:
+            score_cls = "score-mid"
+        else:
+            score_cls = "score-bad"
+
         st.markdown(
-            f"**Score: {bar_val}/100** — <span style='color:{color}'>{state['rationale']}</span>",
+            f'<span class="{score_cls}">{bar_val}/100</span>',
             unsafe_allow_html=True,
         )
+        st.markdown(
+            f'<span class="muted">{state["rationale"]}</span>',
+            unsafe_allow_html=True,
+        )
+
+        # Diagnostic flow for low scores
+        if score_val < DIAGNOSTIC_THRESHOLD:
+            _render_diagnostic_flow(quiz_key, msg_idx, topic_id, student_id)
+
         if st.button("Try another question", key=f"quiz_retry_{msg_idx}"):
             del st.session_state.quiz_state[quiz_key]
+            if quiz_key in st.session_state.diagnostic:
+                del st.session_state.diagnostic[quiz_key]
             st.rerun()
     else:
+        # Answer form
         with st.form(key=f"quiz_form_{msg_idx}"):
-            answer = st.text_area("Your answer:", key=f"quiz_answer_{msg_idx}")
-            submitted = st.form_submit_button("Submit")
+            answer = st.text_area("Your answer:", key=f"quiz_answer_{msg_idx}", height=100)
+            submitted = st.form_submit_button("Submit answer")
 
         if submitted and answer.strip():
             with st.spinner("Grading..."):
@@ -571,7 +1160,6 @@ def _handle_turn(
         episodic = EpisodicStore(conn)
         topics_cfg = _topics()
 
-        # Retrieve candidates
         if topic_id:
             candidates = semantic.by_topic(topic_id)
         else:
@@ -590,7 +1178,6 @@ def _handle_turn(
         recent = episodic.recent(student_id, limit=10)
         recent_ids = {e.id for e in recent if e.id}
 
-        # Run the tutor agent (internally calls routing engine + LLM)
         tutor = TutorAgent(llm=llm, engine=engine, embedder=embedder, logger=logger)
         response = tutor.answer(
             student_id=student_id,
@@ -603,9 +1190,6 @@ def _handle_turn(
             budget=budget,
         )
 
-        # Re-run the routing engine with the same inputs to get the RoutingDecision
-        # for display purposes. This is deterministic — results are identical to what
-        # TutorAgent computed internally. The wart: we embed twice per turn.
         task_emb = embedder.embed_one(prompt)
         decision = engine.route(
             candidates=candidates,
@@ -617,11 +1201,9 @@ def _handle_turn(
             budget=budget,
         )
 
-        # Update reuse counts
         for it in response.selected_items:
             st.session_state.reuse_counts[it.id] += 1
 
-        # Track seen concepts for progress bar
         topic_key = topic_id or "_global"
         if topic_key not in st.session_state.seen_concepts_by_topic:
             st.session_state.seen_concepts_by_topic[topic_key] = set()
@@ -629,15 +1211,10 @@ def _handle_turn(
             if getattr(it, "artifact_type", None) == "concept":
                 st.session_state.seen_concepts_by_topic[topic_key].add(it.id)
 
-        # Persist episodic events
         episodic.append(
             student_id=student_id,
             event_type="question",
-            payload={
-                "text": prompt,
-                "topic_id": topic_id,
-                "source": "streamlit_app",
-            },
+            payload={"text": prompt, "topic_id": topic_id, "source": "streamlit_app"},
         )
         episodic.append(
             student_id=student_id,
@@ -650,7 +1227,6 @@ def _handle_turn(
         )
         conn.commit()
 
-        # Serialize decision into session-state-friendly plain dicts
         st.session_state.last_decision = {
             "selected": [
                 {
@@ -707,7 +1283,7 @@ def _render_welcome(topic_id: str | None):
     margin-bottom: 16px;
     border-left: 4px solid #5b6cff;
 ">
-<h2 style="margin-top:0; color:#1f2235;">👋 Welcome — I'm your ML systems tutor.</h2>
+<h2 style="margin-top:0; color:#1f2235;">Welcome — I'm your ML systems tutor.</h2>
 <p style="color:#444; font-size:1.05rem;">
     Pick a topic on the left, then ask anything — or click one of the starter prompts below to dive in.
     I'll give you a concise answer, a diagram when helpful, and always invite you to go deeper.
@@ -720,7 +1296,6 @@ def _render_welcome(topic_id: str | None):
         unsafe_allow_html=True,
     )
 
-    # Starter prompt chips
     starters = _starter_prompts_for(topic_id)
     st.markdown("**Jump in with:**")
     cols = st.columns(len(starters))
@@ -731,38 +1306,83 @@ def _render_welcome(topic_id: str | None):
 
 
 # ---------------------------------------------------------------------------
+# Suggested follow-ups (extracted from last assistant message)
+# ---------------------------------------------------------------------------
+
+
+_FOLLOWUP_RE = re.compile(
+    r"(?:go deeper|explore|dive into|cover|discuss|learn about|want me to cover)\s+([^?.\n]{8,60})\??",
+    re.IGNORECASE,
+)
+
+
+def _extract_followups(text: str) -> list[str]:
+    """Extract 2-3 suggested follow-up topics from the tutor's closing line."""
+    matches = _FOLLOWUP_RE.findall(text)
+    # Capitalise, deduplicate, trim
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in matches:
+        m = m.strip().rstrip(".,;:")
+        key = m.lower()
+        if key not in seen and len(m) > 6:
+            seen.add(key)
+            result.append(m[0].upper() + m[1:])
+        if len(result) >= 3:
+            break
+    return result
+
+
+def _render_suggested_followups(topic_id: str | None):
+    """Show suggested follow-up chips based on the last assistant message."""
+    msgs = st.session_state.messages
+    if not msgs:
+        return
+    last_asst = next(
+        (m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None
+    )
+    if not last_asst:
+        return
+    followups = _extract_followups(last_asst)
+    if not followups:
+        return
+    st.markdown('<div class="followup-label">Suggested follow-ups:</div>', unsafe_allow_html=True)
+    cols = st.columns(min(len(followups), 3))
+    for i, (col, fu) in enumerate(zip(cols, followups)):
+        label = fu[:50] + ("..." if len(fu) > 50 else "")
+        if col.button(label, key=f"followup_{i}"):
+            st.session_state.pending_prompt = fu
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 
 def main():
     _init_session()
+    _inject_css()
+    _render_hero()
 
-    # Header
-    st.title("Learning Memory OS — tutor demo")
-    st.caption(
-        "CS 153 final project: context-routed tutor with observable routing decisions."
-    )
-
-    # Left sidebar (returns user controls)
+    # Left sidebar
     student_id, topic_id, budget = _render_left_sidebar()
 
-    # Split into main chat pane (wider) and right routing panel
-    main_col, right_col = st.columns([3, 2])
+    # Three-zone layout: main chat (3) + right drawer (1)
+    main_col, right_col = st.columns([3, 1])
 
     with main_col:
         # Welcome screen when chat is empty
         if not st.session_state.messages:
             _render_welcome(topic_id)
-            _render_progress_bar(topic_id)
+        else:
+            # Suggested follow-ups instead of starter chips once chat has messages
+            _render_suggested_followups(topic_id)
 
-        # Replay chat history (with citation rendering + mermaid + quiz)
+        # Replay chat history
         for idx, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
                 if msg["role"] == "assistant":
-                    # Re-derive selected items from last_decision for citation rendering
-                    # For replayed messages we only have the raw text; use stored decision
-                    # for the most recent assistant turn, empty list for earlier turns.
                     selected_items = []
                     if idx == len(st.session_state.messages) - 1 and st.session_state.last_decision:
                         selected_items = st.session_state.last_decision.get("selected", [])
@@ -773,7 +1393,7 @@ def main():
                 else:
                     st.markdown(msg["content"])
 
-        # Handle pending starter prompt (chip click)
+        # Handle pending prompt (chip click)
         active_prompt: str | None = None
         if st.session_state.pending_prompt:
             active_prompt = st.session_state.pending_prompt
@@ -784,27 +1404,31 @@ def main():
             prompt = active_prompt
 
         if prompt:
-            # Show user message immediately
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Generate and display tutor response
             with st.chat_message("assistant"):
                 with st.spinner("Selecting context and generating response..."):
                     reply = _handle_turn(prompt, student_id, topic_id, budget)
-                selected_items = st.session_state.last_decision.get("selected", []) if st.session_state.last_decision else []
+                selected_items = (
+                    st.session_state.last_decision.get("selected", [])
+                    if st.session_state.last_decision
+                    else []
+                )
                 rendered_reply = _render_citations(reply, selected_items)
                 _render_with_mermaid(rendered_reply)
-                # Quiz button for this new message
-                new_msg_idx = len(st.session_state.messages)  # will be the index after append
+                new_msg_idx = len(st.session_state.messages)
                 _render_quiz_for_message(new_msg_idx, topic_id, student_id)
 
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.rerun()
 
+        # Context analysis expander (below chat, full width)
+        _render_context_analysis()
+
     with right_col:
-        _render_routing_panel(right_col, topic_id)
+        _render_right_pane(right_col, topic_id, student_id)
 
 
 if __name__ == "__main__":
