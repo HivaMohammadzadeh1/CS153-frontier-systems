@@ -9,12 +9,12 @@ from learning_memory_os.eval.quiz import (
 
 def test_score_answer_uses_judge():
     fake_llm = MagicMock()
-    fake_llm.complete_json.return_value = {"score": 0.7, "rationale": "partial"}
+    fake_llm.complete_with_schema.return_value = {"score": 0.7, "rationale": "partial"}
     q = QuizQuestion(question="q?", rubric="r", concept_id=None)
     s = score_answer(question=q, student_answer="something", judge_llm=fake_llm)
     assert s.score == 0.7
     assert "partial" in s.rationale
-    fake_llm.complete_json.assert_called_once()
+    fake_llm.complete_with_schema.assert_called_once()
 
 
 def test_score_answer_zero_for_empty():
@@ -22,12 +22,12 @@ def test_score_answer_zero_for_empty():
     q = QuizQuestion(question="q?", rubric="r")
     s = score_answer(question=q, student_answer="", judge_llm=fake_llm)
     assert s.score == 0.0
-    fake_llm.complete_json.assert_not_called()
+    fake_llm.complete_with_schema.assert_not_called()
 
 
 def test_score_answer_clamps_out_of_range():
     fake_llm = MagicMock()
-    fake_llm.complete_json.return_value = {"score": 1.5, "rationale": "ok"}
+    fake_llm.complete_with_schema.return_value = {"score": 1.5, "rationale": "ok"}
     q = QuizQuestion(question="q?", rubric="r")
     s = score_answer(question=q, student_answer="x", judge_llm=fake_llm)
     assert s.score == 1.0

@@ -145,3 +145,32 @@ def test_llm_complete_json_handles_smart_quotes():
         llm = LLM(api_key="sk-test", model="claude-opus-4-7")
         out = llm.complete_json(system="x", user="y")
         assert out == {"question": "What is X?", "rubric": "ok"}
+
+
+def test_llm_complete_with_schema_returns_tool_input():
+    from unittest.mock import MagicMock, patch
+    from learning_memory_os.llm import LLM
+
+    fake_tool_block = MagicMock()
+    fake_tool_block.type = "tool_use"
+    fake_tool_block.name = "submit_response"
+    fake_tool_block.input = {"a": 1, "b": "hello"}
+
+    fake_response = MagicMock()
+    fake_response.content = [fake_tool_block]
+
+    with patch("learning_memory_os.llm.Anthropic") as MockAnthropic:
+        client = MockAnthropic.return_value
+        client.messages.create.return_value = fake_response
+        llm = LLM(api_key="sk-test", model="claude-opus-4-7")
+        out = llm.complete_with_schema(
+            system="x",
+            user="y",
+            schema={"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "string"}}, "required": ["a", "b"]},
+        )
+        assert out == {"a": 1, "b": "hello"}
+        # Verify the API was called with the right tool-use kwargs
+        kwargs = client.messages.create.call_args.kwargs
+        assert "tools" in kwargs
+        assert kwargs["tools"][0]["name"] == "submit_response"
+        assert kwargs["tool_choice"] == {"type": "tool", "name": "submit_response"}

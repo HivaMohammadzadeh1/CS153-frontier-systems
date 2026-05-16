@@ -39,19 +39,17 @@ except ImportError:
 st.set_page_config(page_title="Learning Memory OS", layout="wide")
 
 # ---------------------------------------------------------------------------
-# Quiz generation system prompt
+# Quiz generation schema (tool-use mode — no free-form JSON parsing)
 # ---------------------------------------------------------------------------
 
-QUIZ_GEN_SYSTEM = (
-    "Generate ONE substantive quiz question about the given ML systems engineering topic. "
-    "Output STRICT minified JSON on a single line with two keys: "
-    'question (string), rubric (string describing what a correct answer must contain). '
-    "Do NOT include any commentary, prose, code fences, or explanation outside the JSON object. "
-    "Output ONLY the JSON object. "
-    "All string values must be a single line. "
-    "Inside string values, never use unescaped double quotes — use single quotes or 'these' for sub-quoting. "
-    "Do not use smart/curly quotes; only straight ASCII quotes (\")."
-)
+QUIZ_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "question": {"type": "string", "description": "A substantive quiz question for the student."},
+        "rubric": {"type": "string", "description": "What a correct answer to this question must contain."},
+    },
+    "required": ["question", "rubric"],
+}
 
 # ---------------------------------------------------------------------------
 # Starter prompts per topic
@@ -467,13 +465,15 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
                 llm, _ = _llm_and_embedder()
                 topic_label = topic_id or "ML systems engineering"
                 try:
-                    result = llm.complete_json(
-                        system=QUIZ_GEN_SYSTEM,
-                        user=f"Topic: {topic_label}",
-                        max_tokens=256,
+                    data = llm.complete_with_schema(
+                        system="Generate ONE substantive quiz question on the given ML systems engineering topic.",
+                        user=f"TOPIC: {topic_label}",
+                        schema=QUIZ_QUESTION_SCHEMA,
+                        tool_name="submit_quiz_question",
+                        tool_description="Submit the generated quiz question and its rubric.",
                     )
-                    q_text = result.get("question", "")
-                    rubric = result.get("rubric", "")
+                    q_text = data["question"]
+                    rubric = data["rubric"]
                 except Exception as exc:
                     st.error(f"Could not generate quiz question: {exc}")
                     return

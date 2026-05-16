@@ -30,6 +30,15 @@ Given a question, a rubric, and the student's answer, output STRICT JSON:
 Score 1.0 = correct and complete. Score 0.5 = partially correct. Score 0.0 = wrong or absent.
 No commentary outside JSON."""
 
+QUIZ_SCORE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "score": {"type": "number", "description": "Score from 0.0 (wrong) to 1.0 (correct and complete)."},
+        "rationale": {"type": "string", "description": "One-sentence reason for the score."},
+    },
+    "required": ["score", "rationale"],
+}
+
 
 def score_answer(
     *,
@@ -44,10 +53,17 @@ def score_answer(
         f"RUBRIC: {question.rubric}\n\n"
         f"STUDENT ANSWER:\n{student_answer}"
     )
-    data = judge_llm.complete_json(system=JUDGE_SYSTEM, user=user, max_tokens=512)
-    raw = data.get("score", 0.0)
+    data = judge_llm.complete_with_schema(
+        system=JUDGE_SYSTEM,
+        user=user,
+        schema=QUIZ_SCORE_SCHEMA,
+        tool_name="submit_score",
+        tool_description="Submit the score and rationale.",
+        max_tokens=512,
+    )
+    raw_score = data.get("score", 0.0)
     try:
-        s = float(raw)
+        s = float(raw_score)
     except (TypeError, ValueError):
         s = 0.0
     s = max(0.0, min(1.0, s))

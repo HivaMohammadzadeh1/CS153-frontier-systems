@@ -58,6 +58,44 @@ class LLM:
         final = _normalize_smart_quotes(cleaned)
         return json.loads(final)
 
+    def complete_with_schema(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict,
+        tool_name: str = "submit_response",
+        tool_description: str = "Submit the structured response.",
+        max_tokens: int = 2048,
+    ) -> dict:
+        """Get a Python dict back from the model with schema-validated structure.
+
+        Uses Anthropic's tool-use API. The model is forced to call the named tool
+        whose input_schema is the supplied JSON Schema; Anthropic validates and
+        returns the tool input dict directly. No fragile JSON parsing.
+        """
+        resp = self._client.messages.create(
+            model=self.model,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            max_tokens=max_tokens,
+            tools=[{
+                "name": tool_name,
+                "description": tool_description,
+                "input_schema": schema,
+            }],
+            tool_choice={"type": "tool", "name": tool_name},
+        )
+        for block in resp.content:
+            # SDK exposes tool_use blocks with .input as a dict
+            if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool_name:
+                return dict(block.input)
+        # Fallback: if the model didn't call the tool, raise a clear error
+        raise RuntimeError(
+            f"Model did not call expected tool '{tool_name}'. Response blocks: "
+            f"{[getattr(b, 'type', None) for b in resp.content]}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # helpers
