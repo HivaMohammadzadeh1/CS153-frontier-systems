@@ -63,16 +63,16 @@
   misconception: 8
   paper_claim: 14
 
-=== C/kv_cache (KV cache & PagedAttention) — total 44
-  code_pattern: 3
-  concept: 13
-  example: 6
-  exercise: 5
-  misconception: 7
-  paper_claim: 10
+=== C/kv_cache (KV cache & PagedAttention) — total 175
+  code_pattern: 11
+  concept: 53
+  example: 34
+  exercise: 20
+  misconception: 27
+  paper_claim: 30
     NEAR-DUP (0.967): 'KV Cache' ≈ 'KV Cache'
-    NEAR-DUP (0.954): 'PagedAttention' ≈ 'PagedAttention'
-    NEAR-DUP (0.967): 'PagedAttention' ≈ 'PagedAttention'
+    NEAR-DUP (0.972): 'KV Cache' ≈ 'KV Cache'
+    NEAR-DUP (0.984): 'KV Cache' ≈ 'KV Cache'
 
 === C/quantization (Quantization (int8/int4, GPTQ/AWQ)) — total 19
   code_pattern: 2
@@ -152,5 +152,69 @@
   misconception: 5
   paper_claim: 4
 
+=== B/training_orchestration (Training orchestration (Ray, Slurm, K8s)) — total 33
+  code_pattern: 5
+  concept: 14
+  example: 5
+  exercise: 1
+  misconception: 5
+  paper_claim: 3
+
+=== B/multi_node_networking (Multi-node networking (InfiniBand, NVLink, RDMA, collectives)) — total 29
+  code_pattern: 4
+  concept: 10
+  example: 5
+  exercise: 1
+  misconception: 5
+  paper_claim: 4
+
+=== C/serving_patterns (Serving patterns (canary, shadow, blue-green, versioning)) — total 20
+  code_pattern: 1
+  concept: 8
+  example: 2
+  exercise: 1
+  misconception: 5
+  paper_claim: 3
+
+=== C/compiler_optimizations (Compiler optimizations (XLA, TorchInductor, ONNX, MLIR)) — total 29
+  code_pattern: 3
+  concept: 10
+  example: 4
+  exercise: 1
+  misconception: 5
+  paper_claim: 6
+
+=== F/observability_for_ml (Observability for ML (logging, tracing, metrics, drift)) — total 30
+  code_pattern: 5
+  concept: 10
+  example: 4
+  exercise: 1
+  misconception: 5
+  paper_claim: 5
+
+=== F/feature_stores (Feature stores (online/offline split, embeddings, freshness)) — total 26
+  code_pattern: 3
+  concept: 8
+  example: 4
+  exercise: 2
+  misconception: 5
+  paper_claim: 4
+
+=== F/cost_optimization (Cost optimization (spot, mixed precision, GPU utilization, FinOps)) — total 26
+  code_pattern: 3
+  concept: 8
+  example: 4
+  exercise: 2
+  misconception: 5
+  paper_claim: 4
+
+=== F/multi_tenant_inference (Multi-tenant inference (queueing, fairness, SLA, quotas)) — total 31
+  code_pattern: 3
+  concept: 10
+  example: 5
+  exercise: 1
+  misconception: 6
+  paper_claim: 6
+
 === FLAGS ===
-  kv_cache: 3 near-dup concept pairs
+  kv_cache: 323 near-dup concept pairs

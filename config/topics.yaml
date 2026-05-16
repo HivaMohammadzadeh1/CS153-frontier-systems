@@ -1,5 +1,5 @@
 version: 1
-description: "Learning Memory OS curriculum — 20 topics across 5 areas"
+description: "Learning Memory OS curriculum — 28 topics across 6 areas"
 
 areas:
   A: "Model fundamentals (CS336 L1-L4)"
@@ -7,6 +7,7 @@ areas:
   C: "Inference infrastructure (CS349D + CS336 L10)"
   D: "Data & alignment (CS336 L13-L17)"
   E: "Agent systems & frontier framing (CS153 + project recursion)"
+  F: "Production ML systems (training ops, serving, observability, cost)"
 
 topics:
   - id: tokenization
@@ -159,3 +160,59 @@ topics:
     sources:
       - "data/curriculum/agents_orchestration.md"
     prerequisites: [context_selection]
+
+  - id: training_orchestration
+    area: B
+    title: "Training orchestration (Ray, Slurm, K8s)"
+    sources:
+      - "data/curriculum/training_orchestration.md"
+    prerequisites: [data_parallelism]
+
+  - id: multi_node_networking
+    area: B
+    title: "Multi-node networking (InfiniBand, NVLink, RDMA, collectives)"
+    sources:
+      - "data/curriculum/multi_node_networking.md"
+    prerequisites: [data_parallelism]
+
+  - id: serving_patterns
+    area: C
+    title: "Serving patterns (canary, shadow, blue-green, versioning)"
+    sources:
+      - "data/curriculum/serving_patterns.md"
+    prerequisites: [kv_cache]
+
+  - id: compiler_optimizations
+    area: C
+    title: "Compiler optimizations (XLA, TorchInductor, ONNX, MLIR)"
+    sources:
+      - "data/curriculum/compiler_optimizations.md"
+    prerequisites: [gpu_kernels]
+
+  - id: observability_for_ml
+    area: F
+    title: "Observability for ML (logging, tracing, metrics, drift)"
+    sources:
+      - "data/curriculum/observability_for_ml.md"
+    prerequisites: [serving_patterns]
+
+  - id: feature_stores
+    area: F
+    title: "Feature stores (online/offline split, embeddings, freshness)"
+    sources:
+      - "data/curriculum/feature_stores.md"
+    prerequisites: [pretraining_data]
+
+  - id: cost_optimization
+    area: F
+    title: "Cost optimization (spot, mixed precision, GPU utilization, FinOps)"
+    sources:
+      - "data/curriculum/cost_optimization.md"
+    prerequisites: [resource_accounting]
+
+  - id: multi_tenant_inference
+    area: F
+    title: "Multi-tenant inference (queueing, fairness, SLA, quotas)"
+    sources:
+      - "data/curriculum/multi_tenant_inference.md"
+    prerequisites: [continuous_batching]

@@ -16,7 +16,7 @@ def test_list_topics():
     r = client.get("/api/topics")
     assert r.status_code == 200
     topics = r.json()
-    assert len(topics) == 20
+    assert len(topics) == 28
     assert all("id" in t and "title" in t and "area" in t for t in topics)
 
 

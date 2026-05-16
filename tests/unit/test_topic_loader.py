@@ -32,12 +32,12 @@ topics:
     assert topics[1].sources == ["s1.md", "s2.md"]
 
 
-def test_load_topics_real_curriculum_has_20():
+def test_load_topics_real_curriculum_has_28():
     """Smoke test against the committed curriculum config."""
     topics = load_topics(Path("config/topics.yaml"))
-    assert len(topics) == 20
+    assert len(topics) == 28
     areas = {t.area for t in topics}
-    assert areas == {"A", "B", "C", "D", "E"}
+    assert areas == {"A", "B", "C", "D", "E", "F"}
 
 
 def test_resolve_sources_skips_missing(tmp_path: Path):
