@@ -160,6 +160,60 @@ function selectTopic(topicId, itemEl) {
 }
 
 // ============================================================
+// Load chat history
+// ============================================================
+async function loadHistory() {
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/messages?limit=40`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.messages || data.messages.length === 0) return;
+
+    // Clear existing chat UI + state.messages
+    state.messages = [];
+    const chatEl = $("chat-history");
+    if (chatEl) chatEl.innerHTML = "";
+
+    // Add a subtle "earlier session" separator before restored messages
+    const sep = document.createElement("div");
+    sep.className = "max-w-3xl mx-auto my-1";
+    sep.innerHTML = `<div class="flex items-center gap-2">
+      <div class="flex-1 border-t border-slate-200"></div>
+      <span class="text-xs text-slate-400 italic px-2">earlier session</span>
+      <div class="flex-1 border-t border-slate-200"></div>
+    </div>`;
+    chatEl.appendChild(sep);
+
+    // Replay each message
+    for (const m of data.messages) {
+      state.messages.push({
+        role: m.role,
+        content: m.content,
+        references: [],   // not stored; restored messages have inline [shortid] markers
+        restored: true,
+        timestamp: m.timestamp,
+      });
+      const idx = state.messages.length - 1;
+      let el;
+      if (m.role === "user") {
+        el = renderUserMessage(state.messages[idx]);
+      } else {
+        el = renderAssistantMessage(state.messages[idx], idx);
+      }
+      chatEl.appendChild(el);
+    }
+
+    // Hide the welcome card if there are messages
+    const welcome = $("welcome-card");
+    if (welcome) welcome.style.display = "none";
+
+    scrollToBottom();
+  } catch (e) {
+    console.warn("loadHistory failed:", e);
+  }
+}
+
+// ============================================================
 // Student state
 // ============================================================
 async function refreshStudentState() {
@@ -864,6 +918,20 @@ $("topic-select").addEventListener("change", (e) => {
   });
 });
 
+let _historyDebounceTimer = null;
+
+$("student-id").addEventListener("input", (e) => {
+  // Debounce: wait 500ms after typing stops before reloading history
+  clearTimeout(_historyDebounceTimer);
+  const newId = e.target.value.trim() || "demo-user";
+  _historyDebounceTimer = setTimeout(() => {
+    state.studentId = newId;
+    state.reuseCounts = {};  // reset reuse on student switch
+    refreshStudentState();
+    loadHistory();
+  }, 500);
+});
+
 $("student-id").addEventListener("change", (e) => {
   state.studentId = e.target.value.trim() || "demo-user";
   state.reuseCounts = {};  // reset reuse on student switch
@@ -876,5 +944,6 @@ $("student-id").addEventListener("change", (e) => {
 (async () => {
   await loadTopics();
   await refreshStudentState();
+  await loadHistory();
   $("chat-input").focus();
 })();

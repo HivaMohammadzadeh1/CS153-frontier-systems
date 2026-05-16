@@ -26,3 +26,11 @@ def test_student_state_creates_student():
     payload = r.json()
     assert "mastery" in payload
     assert "misconceptions" in payload
+
+
+def test_student_messages_returns_list():
+    r = client.get("/api/student/restore-test/messages")
+    assert r.status_code == 200
+    payload = r.json()
+    assert "messages" in payload
+    assert isinstance(payload["messages"], list)

@@ -132,6 +132,61 @@ def list_topics():
     return [{"id": t.id, "title": t.title, "area": t.area} for t in _TOPICS]
 
 
+class StoredMessage(BaseModel):
+    role: str            # "user" | "assistant"
+    content: str
+    timestamp: str       # ISO 8601
+
+
+class StoredMessagesResponse(BaseModel):
+    messages: list[StoredMessage]
+
+
+@app.get("/api/student/{student_id}/messages", response_model=StoredMessagesResponse)
+def student_messages(student_id: str, limit: int = 40):
+    """Return the most recent question/tutor_reply events for a student, oldest-first,
+    formatted as renderable chat messages."""
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(student_id)
+        episodic = EpisodicStore(conn)
+        # recent() returns DESC; we want oldest-first for chat replay
+        events = list(episodic.recent(student_id, limit=limit))
+        events.reverse()
+
+        msgs: list[StoredMessage] = []
+        for ev in events:
+            if ev.event_type == "question":
+                text = (ev.payload or {}).get("text", "")
+                if text:
+                    msgs.append(StoredMessage(
+                        role="user",
+                        content=text,
+                        timestamp=ev.occurred_at.isoformat() if ev.occurred_at else "",
+                    ))
+            elif ev.event_type == "tutor_reply":
+                text = (ev.payload or {}).get("text", "")
+                if text:
+                    msgs.append(StoredMessage(
+                        role="assistant",
+                        content=text,
+                        timestamp=ev.occurred_at.isoformat() if ev.occurred_at else "",
+                    ))
+            # Ignore other event types for now
+        return StoredMessagesResponse(messages=msgs)
+    finally:
+        conn.close()
+
+
+@app.get("/api/info")
+def info():
+    return {
+        "tutor_model": "claude-opus-4-7",
+        "embedding_model": "text-embedding-3-small",
+    }
+
+
 @app.get("/api/student/{student_id}/state")
 def student_state(student_id: str):
     conn = connect(_settings().database_url)
