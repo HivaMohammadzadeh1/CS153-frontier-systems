@@ -21,3 +21,14 @@ Then open `http://localhost:8501`. Features:
 - Multi-turn chat with the tutor
 - Observable routing: per-turn selected items, dropped items, score breakdowns
 - Topic focus, token budget, student-mastery state visible in the sidebar
+
+## Web app (production-style)
+
+Launch:
+```bash
+uv run python -m scripts.serve --port 8000
+```
+
+Then open http://localhost:8000.
+
+This is the polished frontend (FastAPI + HTML/JS/Tailwind). The Streamlit demo at `scripts/app.py` is still available for backend developers but the recommended UI is this one.

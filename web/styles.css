@@ -1,0 +1,217 @@
+/* Learning Memory OS — custom CSS layer on top of Tailwind */
+
+/* ---- Base / typography ---- */
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #f8fafc;
+}
+
+/* ---- Scrollbars ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ---- Auto-grow textarea ---- */
+.auto-grow-textarea {
+  resize: none;
+  overflow-y: auto;
+  max-height: 160px;
+  min-height: 44px;
+  transition: height 0.1s ease;
+  field-sizing: content; /* progressive enhancement — Chrome 123+ */
+}
+
+/* ---- Chat messages ---- */
+#chat-history {
+  scroll-behavior: smooth;
+}
+
+.msg-user {
+  animation: slideInRight 0.2s ease-out;
+}
+
+.msg-assistant {
+  animation: slideInLeft 0.2s ease-out;
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ---- Markdown inside chat ---- */
+.prose-chat h2 { font-size: 1rem; font-weight: 600; margin: 0.75rem 0 0.25rem; color: #1e293b; }
+.prose-chat h3 { font-size: 0.9rem; font-weight: 600; margin: 0.5rem 0 0.2rem; color: #334155; }
+.prose-chat p  { margin: 0.35rem 0; line-height: 1.65; }
+.prose-chat ul { padding-left: 1.25rem; margin: 0.35rem 0; list-style: disc; }
+.prose-chat ol { padding-left: 1.25rem; margin: 0.35rem 0; list-style: decimal; }
+.prose-chat li { margin: 0.15rem 0; line-height: 1.55; }
+.prose-chat code {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.82em;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+}
+.prose-chat pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 0.6rem 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+.prose-chat pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.prose-chat blockquote {
+  border-left: 3px solid #6366f1;
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  color: #64748b;
+  font-style: italic;
+}
+.prose-chat a { color: #6366f1; text-decoration: underline; }
+.prose-chat strong { font-weight: 600; color: #1e293b; }
+
+/* ---- References pill ---- */
+.ref-pill {
+  display: inline-flex;
+  align-items: center;
+  background: #eef2ff;
+  color: #4f46e5;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ref-pill:hover { background: #e0e7ff; }
+
+/* ---- Score badge ---- */
+.score-bar-fill {
+  transition: width 0.4s ease;
+}
+
+/* ---- Quiz card ---- */
+.quiz-card {
+  border-left: 3px solid #6366f1;
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* ---- Diagnostic card ---- */
+.diagnostic-card {
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* ---- Mermaid diagrams ---- */
+.mermaid {
+  text-align: center;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---- Sidebar / nav ---- */
+.topic-item {
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.topic-item:hover { background: #eef2ff; color: #4338ca; }
+.topic-item.active { background: #eef2ff; color: #4338ca; font-weight: 500; }
+
+/* ---- Routing drawer ---- */
+.routing-score-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.routing-score-label { width: 5rem; font-size: 0.7rem; color: #64748b; flex-shrink: 0; }
+.routing-score-track {
+  flex: 1;
+  height: 5px;
+  background: #f1f5f9;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.routing-score-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+/* ---- Thinking / loading ---- */
+.thinking-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #6366f1;
+  border-radius: 50%;
+  margin: 0 2px;
+  animation: bounce 1.2s infinite ease-in-out;
+}
+.thinking-dots span:nth-child(1) { animation-delay: 0s; }
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+  40% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ---- Input area ---- */
+#input-area {
+  background: white;
+  border-top: 1px solid #e2e8f0;
+}
+
+/* ---- Right drawer toggle button ---- */
+#drawer-toggle {
+  writing-mode: initial;
+  transition: background 0.15s;
+}
+
+/* ---- Collapsible sections ---- */
+.collapse-icon {
+  transition: transform 0.2s ease;
+}
+.collapsed .collapse-icon {
+  transform: rotate(-90deg);
+}
+
+/* ---- Responsive: hide side panels on small screens ---- */
+@media (max-width: 1024px) {
+  #left-nav { display: none; }
+  #right-drawer { display: none; }
+  #center-col { grid-column: span 12; }
+}
