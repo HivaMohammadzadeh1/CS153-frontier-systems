@@ -23,6 +23,7 @@ from learning_memory_os.memory.store import connect
 from learning_memory_os.memory.semantic import SemanticStore
 from learning_memory_os.memory.student import StudentStore
 from learning_memory_os.memory.episodic import EpisodicStore
+from learning_memory_os.memory.conversation import ConversationStore
 from learning_memory_os.selector.engine import RoutingEngine
 from learning_memory_os.agents.tutor import TutorAgent
 from learning_memory_os.logging_utils.interactions import InteractionLogger
@@ -88,6 +89,7 @@ _TOPICS = load_topics(_PROJECT_ROOT / "config" / "topics.yaml")
 
 class ChatRequest(BaseModel):
     student_id: str
+    conversation_id: Optional[str] = None
     topic_id: Optional[str] = None
     question: str
     budget: int = 3000
@@ -114,6 +116,7 @@ class ChatItem(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    conversation_id: str
     reply: str                       # tutor text with [n]-style references already substituted
     references: list[ChatReference]  # ordered references
     selected: list[ChatItem]
@@ -230,6 +233,15 @@ def _substitute_citations(reply_text: str, decision_selected) -> tuple[str, list
     return new_text, refs
 
 
+TITLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "A 3-6 word title summarizing the topic."},
+    },
+    "required": ["title"],
+}
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     llm, embedder = _llm_and_embedder()
@@ -244,6 +256,14 @@ def chat(req: ChatRequest):
         student.ensure_student(req.student_id)
         semantic = SemanticStore(conn)
         episodic = EpisodicStore(conn)
+        convs = ConversationStore(conn)
+
+        # Resolve or create a conversation
+        conv_was_created = False
+        conversation_id = req.conversation_id
+        if conversation_id is None:
+            conversation_id = convs.create(req.student_id, title="New chat")
+            conv_was_created = True
 
         if req.topic_id:
             candidates = semantic.by_topic(req.topic_id)
@@ -311,13 +331,36 @@ def chat(req: ChatRequest):
         episodic.append(
             student_id=req.student_id, event_type="question",
             payload={"text": req.question, "topic_id": req.topic_id, "source": "api"},
+            conversation_id=conversation_id,
         )
         episodic.append(
             student_id=req.student_id, event_type="tutor_reply",
             payload={"text": response.text,
                      "selected_ids": [it.id for it in response.selected_items],
                      "tokens_used": response.tokens_used},
+            conversation_id=conversation_id,
         )
+
+        # Bump last_message_at so this conversation rises to the top
+        convs.touch(conversation_id)
+
+        # Auto-title on first user message (if title is still default)
+        current_title = convs.get_title(conversation_id)
+        if conv_was_created or current_title in ("", "New chat"):
+            try:
+                title_data = llm.complete_with_schema(
+                    system="Summarize a student tutoring question into a SHORT title (3-6 words). Output only the title field.",
+                    user=f"STUDENT QUESTION: {req.question}",
+                    schema=TITLE_SCHEMA,
+                    tool_name="submit_title",
+                    tool_description="Submit a short conversation title.",
+                    max_tokens=128,
+                )
+                title = (title_data.get("title") or "").strip()
+                if title:
+                    convs.set_title(conversation_id, title[:80])
+            except Exception:
+                pass  # silently ignore title-gen failures
 
         # Soft mastery bump for engaged concepts
         from learning_memory_os.schemas.artifacts import ArtifactType
@@ -353,6 +396,7 @@ def chat(req: ChatRequest):
             )
 
         return ChatResponse(
+            conversation_id=conversation_id,
             reply=new_text,
             references=refs,
             selected=[_item(it, decision.scores) for it in decision.selected],
@@ -624,6 +668,98 @@ def student_progress(student_id: str):
             for m in student.active_misconceptions(student_id)
         ]
         return {"topics": topic_summaries, "misconceptions": misconceptions}
+    finally:
+        conn.close()
+
+
+# ── Conversation endpoints ────────────────────────────────────────────────────
+
+class ConversationSummary(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    last_message_at: str
+
+
+class ConversationListResponse(BaseModel):
+    conversations: list[ConversationSummary]
+
+
+@app.get("/api/student/{student_id}/conversations", response_model=ConversationListResponse)
+def list_conversations(student_id: str, limit: int = 100):
+    conn = connect(_settings().database_url)
+    try:
+        StudentStore(conn).ensure_student(student_id)
+        convs = ConversationStore(conn).list_for_student(student_id, limit=limit)
+        return ConversationListResponse(conversations=[
+            ConversationSummary(
+                id=c["id"],
+                title=c["title"] or "New chat",
+                created_at=c["created_at"].isoformat() if c["created_at"] else "",
+                last_message_at=c["last_message_at"].isoformat() if c["last_message_at"] else "",
+            )
+            for c in convs
+        ])
+    finally:
+        conn.close()
+
+
+class ConversationMessagesResponse(BaseModel):
+    conversation_id: str
+    messages: list[StoredMessage]
+
+
+@app.get("/api/conversations/{conversation_id}/messages", response_model=ConversationMessagesResponse)
+def conversation_messages(conversation_id: str):
+    conn = connect(_settings().database_url)
+    try:
+        rows = ConversationStore(conn).messages(conversation_id)
+        msgs: list[StoredMessage] = []
+        for r in rows:
+            payload = r["payload"] or {}
+            text = payload.get("text", "")
+            if not text:
+                continue
+            role = "user" if r["event_type"] == "question" else "assistant"
+            msgs.append(StoredMessage(
+                role=role,
+                content=text,
+                timestamp=r["occurred_at"].isoformat() if r["occurred_at"] else "",
+            ))
+        return ConversationMessagesResponse(conversation_id=conversation_id, messages=msgs)
+    finally:
+        conn.close()
+
+
+class CreateConversationRequest(BaseModel):
+    student_id: str
+    title: str = "New chat"
+
+
+class CreateConversationResponse(BaseModel):
+    id: str
+    title: str
+
+
+@app.post("/api/conversations", response_model=CreateConversationResponse)
+def create_conversation(req: CreateConversationRequest):
+    conn = connect(_settings().database_url)
+    try:
+        StudentStore(conn).ensure_student(req.student_id)
+        cid = ConversationStore(conn).create(req.student_id, title=req.title)
+        conn.commit()
+        return CreateConversationResponse(id=cid, title=req.title)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str):
+    conn = connect(_settings().database_url)
+    try:
+        ConversationStore(conn).delete(conversation_id)
+        conn.commit()
+        return {"ok": True}
     finally:
         conn.close()
 

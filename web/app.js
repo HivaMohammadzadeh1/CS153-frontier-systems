@@ -1,6 +1,6 @@
 /**
  * Foundry — ML Systems Tutor
- * Claude.ai-style single-column chat frontend.
+ * Claude.ai-style single-column chat frontend with conversation sidebar.
  */
 
 // ── State ──────────────────────────────────────────────────────
@@ -10,6 +10,9 @@ const state = {
   topicId: null,
   messages: [],      // {role, content, reply?, references?, selected?, dropped?, tokens_used?}
   reuseCounts: {},
+  conversationId: null,
+  conversations: [],
+  sidebarHidden: localStorage.getItem('foundry.sidebarHidden') === '1',
 };
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -56,13 +59,106 @@ async function runMermaid(el) {
 
 // ── Citation substitution ──────────────────────────────────────
 function substituteCitations(text, references) {
-  // references is array of {id, n, title, ...}
   if (!references || !references.length) return text;
   let out = text;
   references.forEach((r) => {
     out = out.replaceAll(`[${r.id}]`, `[${r.n}]`);
   });
   return out;
+}
+
+// ── Sidebar ────────────────────────────────────────────────────
+function setSidebar(hidden) {
+  state.sidebarHidden = hidden;
+  localStorage.setItem('foundry.sidebarHidden', hidden ? '1' : '0');
+  const sidebar = $("sidebar");
+  const showBtn = $("showSidebarBtn");
+  const footer = $("chatFooter");
+  if (sidebar) sidebar.classList.toggle("hidden", hidden);
+  if (showBtn) showBtn.classList.toggle("hidden", !hidden);
+  if (footer) {
+    if (hidden) {
+      footer.classList.remove("left-64");
+      footer.classList.add("left-0");
+    } else {
+      footer.classList.remove("left-0");
+      footer.classList.add("left-64");
+    }
+  }
+}
+
+// ── Conversation list ──────────────────────────────────────────
+function formatRelative(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  const diff = (Date.now() - t) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+async function loadConversations() {
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/conversations`);
+    if (!r.ok) return;
+    const data = await r.json();
+    state.conversations = data.conversations || [];
+    renderConversationList();
+  } catch (e) { console.warn(e); }
+}
+
+function renderConversationList() {
+  const el = $("conversationList");
+  if (!el) return;
+  el.innerHTML = '';
+  if (!state.conversations.length) {
+    el.innerHTML = '<div class="text-xs text-gray-400 px-3 py-2">No conversations yet.</div>';
+    return;
+  }
+  for (const c of state.conversations) {
+    const item = document.createElement('button');
+    item.className = `w-full text-left px-3 py-2 rounded-lg text-sm truncate transition ${
+      c.id === state.conversationId
+        ? 'bg-indigo-50 text-indigo-900 font-medium'
+        : 'text-gray-700 hover:bg-gray-100'
+    }`;
+    item.textContent = c.title || 'New chat';
+    item.title = `${c.title} — ${formatRelative(c.last_message_at)}`;
+    item.addEventListener('click', () => loadConversation(c.id));
+    el.appendChild(item);
+  }
+}
+
+async function loadConversation(conversationId) {
+  state.conversationId = conversationId;
+  state.messages = [];
+  state.reuseCounts = {};
+  $("chat").innerHTML = '';
+  $("welcome").style.display = 'none';
+  try {
+    const r = await fetch(`/api/conversations/${conversationId}/messages`);
+    if (!r.ok) return;
+    const data = await r.json();
+    for (const m of data.messages) {
+      const idx = state.messages.length;
+      state.messages.push({ role: m.role, content: m.content, references: [], restored: true });
+      if (m.role === 'user') appendUserBubble(m.content);
+      else appendAssistantMessage(state.messages[idx], idx);
+    }
+    renderConversationList();  // re-render to highlight active
+    scrollBottom();
+  } catch (e) { console.warn(e); }
+}
+
+function startNewChatLocal() {
+  state.conversationId = null;
+  state.messages = [];
+  state.reuseCounts = {};
+  $("chat").innerHTML = '';
+  $("welcome").style.display = '';
+  renderConversationList();
+  $("msgInput").focus();
 }
 
 // ── Starter cards ──────────────────────────────────────────────
@@ -225,6 +321,7 @@ async function sendMessage(text) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         student_id: state.studentId,
+        conversation_id: state.conversationId,
         topic_id: state.topicId,
         question: text,
         budget: state.budget,
@@ -238,6 +335,11 @@ async function sendMessage(text) {
       return;
     }
     const data = await res.json();
+
+    // Track conversation id
+    if (data.conversation_id) {
+      state.conversationId = data.conversation_id;
+    }
 
     data.selected?.forEach((it) => {
       state.reuseCounts[it.id] = (state.reuseCounts[it.id] || 0) + 1;
@@ -255,7 +357,9 @@ async function sendMessage(text) {
     state.messages.push(aMsg);
     appendAssistantMessage(aMsg, msgIdx);
     scrollBottom();
-    // Silently refresh memory in background after each tutor turn
+
+    // Refresh conversation list + memory in background
+    loadConversations();
     loadProgress(true);
   } catch (err) {
     thinking.remove();
@@ -280,13 +384,11 @@ function appendError(text) {
 
 // ── Regenerate ─────────────────────────────────────────────────
 async function regenerate(msgIdx) {
-  // Find the user message that preceded this assistant turn
   let userText = null;
   for (let i = msgIdx - 1; i >= 0; i--) {
     if (state.messages[i].role === "user") { userText = state.messages[i].content; break; }
   }
   if (!userText) return;
-  // Remove the current assistant message element from DOM
   const row = $("chat").querySelector(`[data-msg-idx="${msgIdx}"]`);
   if (row) row.remove();
   state.messages.splice(msgIdx, 1);
@@ -535,7 +637,7 @@ function openMemoryModal() {
   const modal = $("memoryModal");
   modal.classList.remove("hidden");
   modal.classList.add("flex");
-  loadProgress(true);  // force refresh
+  loadProgress(true);
 }
 
 function closeMemoryModal() {
@@ -626,12 +728,10 @@ async function maybeShowWelcomeBack() {
 
   const top3 = data.topics.slice(0, 3).map((t) => t.topic_id).join(", ");
 
-  // Banner above chat (when history is showing)
   const chatBanner = $("welcomeBackBanner");
   $("welcomeBackText").textContent = `Welcome back! We've worked on: ${top3}.`;
   chatBanner.classList.remove("hidden");
 
-  // Banner inside welcome screen
   const welcomeBanner = $("welcomeBackWelcome");
   welcomeBanner.textContent = `Welcome back! We've worked on: ${top3}.`;
   welcomeBanner.classList.remove("hidden");
@@ -650,44 +750,13 @@ async function sendFeedback(msgIdx, rating, selectedItemIds) {
         selected_item_ids: selectedItemIds || [],
       }),
     });
-    // Silently refresh progress cache in background
     loadProgress(true);
-  } catch (_) {}
-}
-
-// ── Load history ───────────────────────────────────────────────
-async function loadHistory() {
-  try {
-    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/messages?limit=40`);
-    if (!r.ok) return;
-    const { messages } = await r.json();
-    if (!messages || !messages.length) return;
-
-    $("welcome").classList.add("hidden");
-
-    // separator
-    const sep = document.createElement("div");
-    sep.className = "flex items-center gap-2 my-2";
-    sep.innerHTML = `<div class="flex-1 border-t border-gray-200"></div><span class="text-xs text-gray-400 italic px-2">earlier session</span><div class="flex-1 border-t border-gray-200"></div>`;
-    $("chat").appendChild(sep);
-
-    messages.forEach((m, i) => {
-      const idx = state.messages.length;
-      state.messages.push({ role: m.role, content: m.content, references: [] });
-      if (m.role === "user") appendUserBubble(m.content);
-      else appendAssistantMessage(state.messages[idx], idx);
-    });
-    scrollBottom();
   } catch (_) {}
 }
 
 // ── New chat ───────────────────────────────────────────────────
 function newChat() {
-  state.messages = [];
-  state.reuseCounts = {};
-  $("chat").innerHTML = "";
-  $("welcome").classList.remove("hidden");
-  $("msgInput").focus();
+  startNewChatLocal();
 }
 
 // ── Events ─────────────────────────────────────────────────────
@@ -703,7 +772,12 @@ $("msgInput").addEventListener("keydown", (e) => {
 
 $("sendBtn").addEventListener("click", () => sendMessage());
 
-$("newChatBtn").addEventListener("click", newChat);
+$("newChatSidebarBtn").addEventListener("click", startNewChatLocal);
+
+$("toggleSidebar").addEventListener("click", () => setSidebar(true));
+$("showSidebarBtn").addEventListener("click", () => setSidebar(false));
+
+$("memoryLink").addEventListener("click", (e) => { e.preventDefault(); openMemoryModal(); });
 
 $("budgetSlider").addEventListener("input", (e) => {
   state.budget = parseInt(e.target.value, 10);
@@ -714,9 +788,10 @@ $("studentIdInput").addEventListener("change", (e) => {
   state.studentId = e.target.value.trim() || "you";
   state.reuseCounts = {};
   state.messages = [];
+  state.conversationId = null;
   $("chat").innerHTML = "";
   $("welcome").classList.remove("hidden");
-  loadHistory();
+  loadConversations();
 });
 
 $("topicSelect").addEventListener("change", (e) => {
@@ -743,9 +818,11 @@ $("welcomeBackOpenMemory").addEventListener("click", openMemoryModal);
 
 // ── Init ───────────────────────────────────────────────────────
 (async () => {
+  // Apply saved sidebar state before anything renders
+  setSidebar(state.sidebarHidden);
   buildStarterGrid();
   await loadTopics();
-  await loadHistory();
+  await loadConversations();
   await maybeShowWelcomeBack();
   $("msgInput").focus();
 })();

@@ -15,12 +15,13 @@ class EpisodicStore:
         event_type: str,
         payload: dict,
         embedding: list[float] | None = None,
+        conversation_id: str | None = None,
     ) -> str:
         with self.conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO episodic_events (student_id, event_type, payload, embedding, occurred_at)
-                VALUES (%s, %s, %s::jsonb, %s::vector, clock_timestamp())
+                INSERT INTO episodic_events (student_id, event_type, payload, embedding, conversation_id, occurred_at)
+                VALUES (%s, %s, %s::jsonb, %s::vector, %s::uuid, clock_timestamp())
                 RETURNING id::text
                 """,
                 (
@@ -28,6 +29,7 @@ class EpisodicStore:
                     event_type,
                     json.dumps(payload),
                     vec_literal(embedding) if embedding else None,
+                    conversation_id,
                 ),
             )
             return cur.fetchone()["id"]
