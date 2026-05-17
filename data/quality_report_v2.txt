@@ -63,13 +63,13 @@
   misconception: 8
   paper_claim: 14
 
-=== C/kv_cache (KV cache & PagedAttention) — total 175
-  code_pattern: 11
-  concept: 53
-  example: 34
-  exercise: 20
-  misconception: 27
-  paper_claim: 30
+=== C/kv_cache (KV cache & PagedAttention) — total 248
+  code_pattern: 17
+  concept: 73
+  example: 50
+  exercise: 29
+  misconception: 39
+  paper_claim: 40
     NEAR-DUP (0.967): 'KV Cache' ≈ 'KV Cache'
     NEAR-DUP (0.972): 'KV Cache' ≈ 'KV Cache'
     NEAR-DUP (0.984): 'KV Cache' ≈ 'KV Cache'
@@ -216,5 +216,83 @@
   misconception: 6
   paper_claim: 6
 
+=== G/recommendation_systems (Recommendation Systems (two-tower, ranking, exploration)) — total 41
+  code_pattern: 8
+  concept: 14
+  example: 6
+  exercise: 3
+  misconception: 5
+  paper_claim: 5
+
+=== G/search_systems (Search Systems (BM25, semantic, hybrid retrieval, LTR)) — total 40
+  code_pattern: 8
+  concept: 13
+  example: 6
+  exercise: 3
+  misconception: 5
+  paper_claim: 5
+
+=== G/ad_systems (Ad Systems (auction, CTR, calibration, RTB)) — total 31
+  code_pattern: 6
+  concept: 10
+  example: 4
+  exercise: 3
+  misconception: 5
+  paper_claim: 3
+
+=== G/newsfeed_ranking (Newsfeed Ranking (multi-stage, position bias, freshness)) — total 39
+  code_pattern: 9
+  concept: 11
+  example: 8
+  exercise: 4
+  misconception: 6
+  paper_claim: 1
+
+=== G/anomaly_detection_systems (Anomaly Detection Systems (isolation forest, autoencoder, fraud)) — total 29
+  code_pattern: 7
+  concept: 9
+  example: 5
+  exercise: 3
+  misconception: 5
+
+=== G/vector_database_design (Vector Database Design (HNSW, IVF-PQ, sharding, hybrid search)) — total 39
+  code_pattern: 12
+  concept: 9
+  example: 7
+  exercise: 3
+  misconception: 5
+  paper_claim: 3
+
+=== E/rag_architecture (RAG Architecture (chunking, reranking, hybrid retrieval, semantic cache)) — total 39
+  code_pattern: 9
+  concept: 12
+  example: 7
+  exercise: 3
+  misconception: 5
+  paper_claim: 3
+
+=== F/ab_testing_for_ml (A/B Testing for ML (bandits, CUPED, IPS, doubly-robust)) — total 34
+  code_pattern: 6
+  concept: 10
+  example: 5
+  exercise: 3
+  misconception: 5
+  paper_claim: 5
+
+=== C/long_context_methods (Long Context Methods (RoPE scaling, YaRN, ring attention, NIAH)) — total 42
+  code_pattern: 9
+  concept: 9
+  example: 9
+  exercise: 3
+  misconception: 5
+  paper_claim: 7
+
+=== D/data_pipelines_for_ml (Data Pipelines for ML (Airflow, Beam, Flink, dbt, lineage)) — total 31
+  code_pattern: 8
+  concept: 8
+  example: 7
+  exercise: 3
+  misconception: 5
+
 === FLAGS ===
-  kv_cache: 323 near-dup concept pairs
+  kv_cache: 690 near-dup concept pairs

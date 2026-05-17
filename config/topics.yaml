@@ -1,5 +1,5 @@
 version: 1
-description: "Learning Memory OS curriculum — 28 topics across 6 areas"
+description: "Learning Memory OS curriculum — 38 topics across 7 areas"
 
 areas:
   A: "Model fundamentals (CS336 L1-L4)"
@@ -8,6 +8,7 @@ areas:
   D: "Data & alignment (CS336 L13-L17)"
   E: "Agent systems & frontier framing (CS153 + project recursion)"
   F: "Production ML systems (training ops, serving, observability, cost)"
+  G: "ML System Design (recsys, search, ads, newsfeed, anomaly, vector DB)"
 
 topics:
   - id: tokenization
@@ -216,3 +217,75 @@ topics:
     sources:
       - "data/curriculum/multi_tenant_inference.md"
     prerequisites: [continuous_batching]
+
+  # Area G — ML System Design
+  - id: recommendation_systems
+    area: G
+    title: "Recommendation Systems (two-tower, ranking, exploration)"
+    sources:
+      - "data/curriculum/recommendation_systems.md"
+    prerequisites: [data_parallelism]
+
+  - id: search_systems
+    area: G
+    title: "Search Systems (BM25, semantic, hybrid retrieval, LTR)"
+    sources:
+      - "data/curriculum/search_systems.md"
+    prerequisites: [kv_cache]
+
+  - id: ad_systems
+    area: G
+    title: "Ad Systems (auction, CTR, calibration, RTB)"
+    sources:
+      - "data/curriculum/ad_systems.md"
+    prerequisites: [recommendation_systems]
+
+  - id: newsfeed_ranking
+    area: G
+    title: "Newsfeed Ranking (multi-stage, position bias, freshness)"
+    sources:
+      - "data/curriculum/newsfeed_ranking.md"
+    prerequisites: [recommendation_systems]
+
+  - id: anomaly_detection_systems
+    area: G
+    title: "Anomaly Detection Systems (isolation forest, autoencoder, fraud)"
+    sources:
+      - "data/curriculum/anomaly_detection_systems.md"
+    prerequisites: [feature_stores]
+
+  - id: vector_database_design
+    area: G
+    title: "Vector Database Design (HNSW, IVF-PQ, sharding, hybrid search)"
+    sources:
+      - "data/curriculum/vector_database_design.md"
+    prerequisites: [attention_moe]
+
+  # Extensions to existing areas
+  - id: rag_architecture
+    area: E
+    title: "RAG Architecture (chunking, reranking, hybrid retrieval, semantic cache)"
+    sources:
+      - "data/curriculum/rag_architecture.md"
+    prerequisites: [context_selection]
+
+  - id: ab_testing_for_ml
+    area: F
+    title: "A/B Testing for ML (bandits, CUPED, IPS, doubly-robust)"
+    sources:
+      - "data/curriculum/ab_testing_for_ml.md"
+    prerequisites: [observability_for_ml]
+
+  - id: long_context_methods
+    area: C
+    title: "Long Context Methods (RoPE scaling, YaRN, ring attention, NIAH)"
+    sources:
+      - "data/curriculum/long_context_methods.md"
+    prerequisites: [attention_moe]
+
+  - id: data_pipelines_for_ml
+    area: D
+    title: "Data Pipelines for ML (Airflow, Beam, Flink, dbt, lineage)"
+    sources:
+      - "data/curriculum/data_pipelines_for_ml.md"
+    prerequisites: [pretraining_data]
