@@ -127,3 +127,17 @@ details.refs[open] > summary { color: #4b5563; }
   to   { opacity: 1; transform: translateY(0); }
 }
 .msg-row { animation: fadeUp 0.18s ease-out; }
+
+/* Feedback thumbs — disabled state keeps chosen icon legible */
+.btn-thumbsup:disabled, .btn-thumbsdown:disabled {
+  opacity: 0.8;
+  cursor: default;
+}
+
+/* Memory modal mastery bars */
+#memoryBody .mastery-label { font-size: 0.72rem; color: #9ca3af; }
+
+/* Welcome-back banner slide-in */
+#welcomeBackBanner, #welcomeBackWelcome {
+  animation: fadeUp 0.25s ease-out;
+}

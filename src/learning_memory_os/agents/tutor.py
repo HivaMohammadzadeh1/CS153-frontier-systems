@@ -17,7 +17,12 @@ Style rules (these matter):
 6. NEVER dump a textbook. If you can't fit the answer in ~250 words, pick the most important angle and offer to expand.
 7. If the provided context doesn't fully answer the question, say so plainly and suggest what additional material would help.
 
-You are talking to a student who wants to learn ML systems engineering. Be warm, concrete, and curious-leaning. Avoid jargon dumps; explain terms when you first use them."""
+You are talking to a student who wants to learn ML systems engineering. Be warm, concrete, and curious-leaning. Avoid jargon dumps; explain terms when you first use them.
+
+When a "STUDENT PROFILE" section is provided:
+- Calibrate depth: skip basics on topics where mastery is high; spend more time on weak areas.
+- If the question touches an active misconception, address it explicitly and gently correct it.
+- Don't be condescending. Don't say "as I mentioned before" — the student may not remember."""
 
 
 class TutorAgent:
@@ -45,6 +50,9 @@ class TutorAgent:
         recent_ids: set[str],
         reuse_counts: dict[str, int],
         budget: int,
+        weak_concepts: list[str] | None = None,
+        strong_concepts: list[str] | None = None,
+        active_misconception_texts: list[str] | None = None,
     ) -> AgentResponse:
         task_emb = self.embedder.embed_one(question)
         decision = self.engine.route(
@@ -72,7 +80,24 @@ class TutorAgent:
         context_block = "\n\n".join(
             f"[{it.id}] {it.title}\n{it.body}" for it in decision.selected
         )
-        user_prompt = f"CONTEXT ITEMS:\n{context_block}\n\nSTUDENT QUESTION:\n{question}"
+
+        # Build optional student profile block
+        profile_parts = []
+        if weak_concepts:
+            profile_parts.append(f"- Mastery is LOW for: {', '.join(weak_concepts)}")
+        if strong_concepts:
+            profile_parts.append(f"- Mastery is HIGH for: {', '.join(strong_concepts)}")
+        if active_misconception_texts:
+            profile_parts.append(
+                f"- Active misconceptions to address: {'; '.join(active_misconception_texts)}"
+            )
+
+        if profile_parts:
+            profile_block = "STUDENT PROFILE:\n" + "\n".join(profile_parts) + "\n\n"
+        else:
+            profile_block = ""
+
+        user_prompt = f"{profile_block}CONTEXT ITEMS:\n{context_block}\n\nSTUDENT QUESTION:\n{question}"
         text = self.llm.complete(
             system=TUTOR_SYSTEM, user=user_prompt, max_tokens=1024
         )

@@ -154,6 +154,9 @@ function appendAssistantMessage(msg, msgIdx) {
       <button class="btn-ctx hover:text-indigo-600 transition-colors" title="View context">🔍 View context</button>
       <button class="btn-regen hover:text-indigo-600 transition-colors" title="Regenerate">🔁 Regenerate</button>
       <button class="btn-copy hover:text-indigo-600 transition-colors" title="Copy">📋 Copy</button>
+      <span class="flex-1"></span>
+      <button class="btn-thumbsup hover:text-emerald-600 transition-colors" title="Helpful">👍</button>
+      <button class="btn-thumbsdown hover:text-rose-600 transition-colors" title="Not helpful">👎</button>
     </div>
     <div class="quiz-area mt-2"></div>`;
 
@@ -162,6 +165,20 @@ function appendAssistantMessage(msg, msgIdx) {
   row.querySelector(".btn-ctx").addEventListener("click", () => openRoutingModal(msg));
   row.querySelector(".btn-regen").addEventListener("click", () => regenerate(msgIdx));
   row.querySelector(".btn-copy").addEventListener("click", () => copyReply(msg.content));
+
+  const selectedIds = (msg.selected || []).map((it) => it.id);
+  row.querySelector(".btn-thumbsup").addEventListener("click", function () {
+    sendFeedback(msgIdx, 1, selectedIds);
+    this.textContent = "👍✓";
+    this.disabled = true;
+    row.querySelector(".btn-thumbsdown").disabled = true;
+  });
+  row.querySelector(".btn-thumbsdown").addEventListener("click", function () {
+    sendFeedback(msgIdx, -1, selectedIds);
+    this.textContent = "👎✓";
+    this.disabled = true;
+    row.querySelector(".btn-thumbsup").disabled = true;
+  });
 
   $("chat").appendChild(row);
   runMermaid(row);
@@ -238,6 +255,8 @@ async function sendMessage(text) {
     state.messages.push(aMsg);
     appendAssistantMessage(aMsg, msgIdx);
     scrollBottom();
+    // Silently refresh memory in background after each tutor turn
+    loadProgress(true);
   } catch (err) {
     thinking.remove();
     appendError(err.message);
@@ -511,6 +530,131 @@ async function continueDiagnostic(card, originalQuestion, diagData, turnIndex) {
   }
 }
 
+// ── Memory modal ───────────────────────────────────────────────
+function openMemoryModal() {
+  const modal = $("memoryModal");
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  loadProgress(true);  // force refresh
+}
+
+function closeMemoryModal() {
+  const modal = $("memoryModal");
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
+}
+
+function masteryBar(score, confidence) {
+  const pct = Math.round(score * 100);
+  const alpha = Math.max(0.3, confidence);
+  const color = score >= 0.7 ? "bg-emerald-500" : score >= 0.4 ? "bg-amber-400" : "bg-rose-400";
+  return `<div class="flex items-center gap-2">
+    <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+      <div class="h-full ${color} rounded-full" style="width:${pct}%; opacity:${alpha.toFixed(2)}"></div>
+    </div>
+    <span class="text-xs text-gray-500 w-8 text-right">${pct}%</span>
+  </div>`;
+}
+
+let _progressCache = null;
+
+async function loadProgress(force = false) {
+  if (!force && _progressCache) {
+    _renderMemoryModal(_progressCache);
+    return _progressCache;
+  }
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/progress`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    _progressCache = data;
+    _renderMemoryModal(data);
+    return data;
+  } catch (_) { return null; }
+}
+
+function _renderMemoryModal(data) {
+  const body = $("memoryBody");
+  if (!data) { body.innerHTML = `<p class="text-gray-400 text-xs italic">No data yet.</p>`; return; }
+
+  const topics = (data.topics || []).slice(0, 8);
+  const misc = data.misconceptions || [];
+
+  let html = "";
+
+  if (topics.length === 0) {
+    html += `<p class="text-gray-400 text-xs italic">No mastery data yet — start chatting or take a quiz!</p>`;
+  } else {
+    html += `<div>
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Topic mastery</p>
+      <div class="space-y-2">`;
+    topics.forEach((t) => {
+      html += `<div>
+        <div class="flex justify-between text-xs text-gray-700 mb-0.5">
+          <span class="font-medium truncate max-w-[75%]">${esc(t.topic_id)}</span>
+          <span class="text-gray-400">${Math.round(t.avg_mastery * 100)}%</span>
+        </div>
+        ${masteryBar(t.avg_mastery, 1.0)}
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  if (misc.length > 0) {
+    html += `<div class="border-t border-gray-100 pt-3">
+      <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Active misconceptions (${misc.length})</p>
+      <ul class="space-y-1.5">`;
+    misc.slice(0, 5).forEach((m) => {
+      html += `<li class="flex items-start gap-2 text-xs text-gray-600">
+        <span class="text-amber-500 mt-0.5 flex-shrink-0">⚠</span>
+        <span>${esc(m.description)}</span>
+      </li>`;
+    });
+    html += `</ul></div>`;
+  } else if (topics.length > 0) {
+    html += `<div class="border-t border-gray-100 pt-3">
+      <p class="text-[11px] text-gray-400 italic">No active misconceptions recorded.</p>
+    </div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+async function maybeShowWelcomeBack() {
+  const data = await loadProgress();
+  if (!data || !data.topics || data.topics.length === 0) return;
+
+  const top3 = data.topics.slice(0, 3).map((t) => t.topic_id).join(", ");
+
+  // Banner above chat (when history is showing)
+  const chatBanner = $("welcomeBackBanner");
+  $("welcomeBackText").textContent = `Welcome back! We've worked on: ${top3}.`;
+  chatBanner.classList.remove("hidden");
+
+  // Banner inside welcome screen
+  const welcomeBanner = $("welcomeBackWelcome");
+  welcomeBanner.textContent = `Welcome back! We've worked on: ${top3}.`;
+  welcomeBanner.classList.remove("hidden");
+}
+
+// ── Feedback (thumbs up/down) ──────────────────────────────────
+async function sendFeedback(msgIdx, rating, selectedItemIds) {
+  try {
+    await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_id: state.studentId,
+        message_idx: msgIdx,
+        rating,
+        selected_item_ids: selectedItemIds || [],
+      }),
+    });
+    // Silently refresh progress cache in background
+    loadProgress(true);
+  } catch (_) {}
+}
+
 // ── Load history ───────────────────────────────────────────────
 async function loadHistory() {
   try {
@@ -587,12 +731,21 @@ $("clearHistoryBtn").addEventListener("click", () => {
 // Routing modal close
 $("routingClose").addEventListener("click", closeRoutingModal);
 $("routingBackdrop").addEventListener("click", closeRoutingModal);
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRoutingModal(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeRoutingModal(); closeMemoryModal(); }
+});
+
+// Memory modal
+$("memoryBtn").addEventListener("click", openMemoryModal);
+$("memoryClose").addEventListener("click", closeMemoryModal);
+$("memoryBackdrop").addEventListener("click", closeMemoryModal);
+$("welcomeBackOpenMemory").addEventListener("click", openMemoryModal);
 
 // ── Init ───────────────────────────────────────────────────────
 (async () => {
   buildStarterGrid();
   await loadTopics();
   await loadHistory();
+  await maybeShowWelcomeBack();
   $("msgInput").focus();
 })();

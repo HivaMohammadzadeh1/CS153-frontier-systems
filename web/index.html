@@ -29,6 +29,7 @@
       </select>
       <div class="ml-auto flex items-center gap-2">
         <button id="newChatBtn" class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-indigo-300 hover:text-indigo-700 transition-colors">+ New chat</button>
+        <button id="memoryBtn" title="What I remember about you" class="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-500 hover:text-indigo-700 hover:border-indigo-300 transition-colors">🧠 Memory</button>
         <details id="overflowMenu" class="relative">
           <summary class="cursor-pointer list-none rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-500 hover:text-gray-700 select-none">⋯</summary>
           <div class="absolute right-0 mt-2 w-72 rounded-2xl border border-gray-200 bg-white p-4 shadow-lg z-30">
@@ -50,10 +51,19 @@
   <!-- Main column -->
   <main class="mx-auto max-w-3xl px-4 pb-36 pt-2">
 
+    <!-- Welcome-back banner (shown above chat when student has history) -->
+    <div id="welcomeBackBanner" class="hidden mt-3 mb-1 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 flex items-center gap-3 text-sm">
+      <span class="text-indigo-500 text-base">👋</span>
+      <span id="welcomeBackText" class="flex-1 text-indigo-800 font-medium"></span>
+      <button id="welcomeBackOpenMemory" class="text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2 flex-shrink-0">View memory →</button>
+    </div>
+
     <!-- Welcome state -->
     <section id="welcome" class="pt-16 pb-8">
       <h1 class="text-center text-2xl font-semibold text-gray-900">What do you want to learn?</h1>
       <p class="text-center text-sm text-gray-500 mt-1.5">Ask anything about ML systems engineering.</p>
+      <!-- Welcome-back mini-banner inside welcome screen -->
+      <div id="welcomeBackWelcome" class="hidden mt-4 mx-auto max-w-md rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5 text-sm text-center text-indigo-800"></div>
       <div id="starterGrid" class="mt-8 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"></div>
     </section>
 
@@ -73,6 +83,21 @@
       <div class="text-center text-[11px] text-gray-400 mt-1.5">Enter to send &nbsp;·&nbsp; Shift+Enter for newline</div>
     </div>
   </footer>
+
+  <!-- Memory modal -->
+  <div id="memoryModal" class="fixed inset-0 z-40 hidden items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/30 backdrop-blur-sm" id="memoryBackdrop"></div>
+    <div class="relative mx-auto w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold text-gray-900">🧠 What I remember about you</h2>
+        <button id="memoryClose" class="text-gray-400 hover:text-gray-700 text-lg leading-none">&#x2715;</button>
+      </div>
+      <div id="memoryBody" class="space-y-4 text-sm">
+        <p class="text-gray-400 text-xs italic">Loading…</p>
+      </div>
+      <p class="mt-4 text-[11px] text-gray-400 border-t border-gray-100 pt-3">Updated automatically as you chat and quiz.</p>
+    </div>
+  </div>
 
   <!-- Routing modal -->
   <div id="routingModal" class="fixed inset-0 z-40 hidden items-center justify-center p-4">

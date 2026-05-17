@@ -34,3 +34,21 @@ def test_student_messages_returns_list():
     payload = r.json()
     assert "messages" in payload
     assert isinstance(payload["messages"], list)
+
+
+def test_student_progress_returns_shape():
+    r = client.get("/api/student/progress-test-user/progress")
+    assert r.status_code == 200
+    data = r.json()
+    assert "topics" in data and "misconceptions" in data
+
+
+def test_feedback_endpoint_accepts_thumbs():
+    r = client.post("/api/feedback", json={
+        "student_id": "feedback-test",
+        "message_idx": 0,
+        "rating": 1,
+        "selected_item_ids": ["aaaa1111"],
+    })
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}

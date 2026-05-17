@@ -259,6 +259,28 @@ def chat(req: ChatRequest):
         recent = episodic.recent(req.student_id, limit=10)
         recent_ids = {e.id for e in recent if e.id}
 
+        # Build student profile for adaptive prompting
+        mastery_records = student.mastery_for(req.student_id)
+        weak_ids = [m.concept_id for m in mastery_records if m.score < 0.4 and m.confidence > 0.2]
+        strong_ids = [m.concept_id for m in mastery_records if m.score > 0.7 and m.confidence > 0.3]
+
+        weak_titles: list[str] = []
+        strong_titles: list[str] = []
+        if weak_ids or strong_ids:
+            ids_needed = list(set(weak_ids + strong_ids))
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text AS id, title FROM semantic_items WHERE id::text = ANY(%s)",
+                    (ids_needed,),
+                )
+                id_to_title = {r["id"]: r["title"] for r in cur.fetchall()}
+            weak_titles = [id_to_title[i] for i in weak_ids if i in id_to_title][:5]
+            strong_titles = [id_to_title[i] for i in strong_ids if i in id_to_title][:5]
+
+        active_misc_texts = [
+            m["description"][:120] for m in student.active_misconceptions(req.student_id)
+        ][:3]
+
         tutor = TutorAgent(llm=llm, engine=engine, embedder=embedder, logger=logger)
         response = tutor.answer(
             student_id=req.student_id,
@@ -269,6 +291,9 @@ def chat(req: ChatRequest):
             recent_ids=recent_ids,
             reuse_counts=dict(req.reuse_counts),
             budget=req.budget,
+            weak_concepts=weak_titles or None,
+            strong_concepts=strong_titles or None,
+            active_misconception_texts=active_misc_texts or None,
         )
 
         # Re-run engine to recover decision details
@@ -293,6 +318,24 @@ def chat(req: ChatRequest):
                      "selected_ids": [it.id for it in response.selected_items],
                      "tokens_used": response.tokens_used},
         )
+
+        # Soft mastery bump for engaged concepts
+        from learning_memory_os.schemas.artifacts import ArtifactType
+        for it in response.selected_items:
+            # artifact_type is ArtifactType enum (str subclass); compare .value
+            if it.artifact_type is not None and it.artifact_type.value == "concept":
+                current = next(
+                    (m for m in student.mastery_for(req.student_id) if m.concept_id == it.id),
+                    None,
+                )
+                if current:
+                    new_score = min(1.0, current.score + 0.02)
+                    new_conf = min(1.0, current.confidence + 0.05)
+                else:
+                    new_score = 0.3  # low initial mastery on first encounter
+                    new_conf = 0.1
+                student.update_mastery(req.student_id, it.id, new_score, new_conf)
+
         conn.commit()
 
         new_text, refs = _substitute_citations(response.text, decision.selected)
@@ -375,7 +418,7 @@ def quiz_score(req: QuizScoreRequest):
     llm, _ = _llm_and_embedder()
     q = QuizQuestion(question=req.question, rubric=req.rubric)
     result = score_answer(question=q, student_answer=req.answer, judge_llm=llm)
-    # Log as episodic event
+    # Log as episodic event AND update mastery
     conn = connect(_settings().database_url)
     try:
         episodic = EpisodicStore(conn)
@@ -385,6 +428,32 @@ def quiz_score(req: QuizScoreRequest):
                      "answer": req.answer, "score": result.score,
                      "rationale": result.rationale},
         )
+
+        # Bump mastery: exponential moving average toward the quiz score
+        student = StudentStore(conn)
+        student.ensure_student(req.student_id)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id::text FROM semantic_items WHERE topic_id = %s AND artifact_type = 'concept' LIMIT 5",
+                (req.topic_id,),
+            )
+            concept_ids = [r["id"] for r in cur.fetchall()]
+
+        for cid in concept_ids:
+            current = next(
+                (m for m in student.mastery_for(req.student_id) if m.concept_id == cid),
+                None,
+            )
+            if current:
+                # Exponential moving average: 70% old, 30% new
+                new_score = 0.7 * current.score + 0.3 * result.score
+                new_conf = min(1.0, current.confidence + 0.1)
+            else:
+                new_score = result.score
+                new_conf = 0.3  # low confidence on first observation
+            student.update_mastery(req.student_id, cid, new_score, new_conf)
+
         conn.commit()
     finally:
         conn.close()
@@ -473,6 +542,90 @@ def diagnostic_turn(req: DiagnosticTurnRequest):
             conn.close()
 
     return DiagnosticTurnResponse(**data)
+
+
+class FeedbackRequest(BaseModel):
+    student_id: str
+    message_idx: int            # client-assigned ordinal of the assistant message
+    rating: int                 # +1 (helpful), -1 (not helpful)
+    selected_item_ids: list[str] = []   # which items contributed to this reply
+
+
+@app.post("/api/feedback")
+def feedback(req: FeedbackRequest):
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(req.student_id)
+        episodic = EpisodicStore(conn)
+        episodic.append(
+            student_id=req.student_id,
+            event_type="feedback",
+            payload={
+                "message_idx": req.message_idx,
+                "rating": req.rating,
+                "selected_item_ids": req.selected_item_ids,
+            },
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/student/{student_id}/progress")
+def student_progress(student_id: str):
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(student_id)
+        mastery = student.mastery_for(student_id)
+
+        # Join with concept titles and topic_ids
+        ids = [m.concept_id for m in mastery]
+        id_to_meta: dict[str, dict] = {}
+        if ids:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text AS id, title, topic_id FROM semantic_items WHERE id::text = ANY(%s)",
+                    (ids,),
+                )
+                for r in cur.fetchall():
+                    id_to_meta[r["id"]] = {"title": r["title"], "topic_id": r["topic_id"]}
+
+        # Group by topic
+        by_topic: dict[str, list] = {}
+        for m in mastery:
+            meta = id_to_meta.get(m.concept_id, {"title": m.concept_id, "topic_id": "?"})
+            by_topic.setdefault(meta["topic_id"], []).append({
+                "concept_title": meta["title"],
+                "score": m.score,
+                "confidence": m.confidence,
+            })
+
+        # Confidence-weighted average mastery per topic
+        topic_summaries = []
+        for topic_id, items in by_topic.items():
+            total_conf = sum(i["confidence"] for i in items) or 0.001
+            avg = sum(i["score"] * i["confidence"] for i in items) / total_conf
+            topic_summaries.append({
+                "topic_id": topic_id,
+                "concepts": items[:5],
+                "avg_mastery": round(avg, 3),
+            })
+        topic_summaries.sort(key=lambda x: -x["avg_mastery"])
+
+        misconceptions = [
+            {
+                "id": m["id"],
+                "description": m["description"],
+                "detected_at": str(m.get("detected_at", "")),
+            }
+            for m in student.active_misconceptions(student_id)
+        ]
+        return {"topics": topic_summaries, "misconceptions": misconceptions}
+    finally:
+        conn.close()
 
 
 # Mount static frontend last so /api routes take precedence
