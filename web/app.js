@@ -1,868 +1,209 @@
 /**
- * Learning Memory OS — frontend app
- * Single-page chat UI using the FastAPI backend.
+ * Foundry — ML Systems Tutor
+ * Claude.ai-style single-column chat frontend.
  */
 
-// ============================================================
-// Configuration
-// ============================================================
-const API_BASE = "";  // same origin
-
-// ============================================================
-// State
-// ============================================================
+// ── State ──────────────────────────────────────────────────────
 const state = {
-  studentId: "demo-user",
-  topicId: null,
+  studentId: "you",
   budget: 3000,
-  messages: [],       // {role, content, references?, selected?, dropped?, tokens_used?, quiz?, diagnostic?}
+  topicId: null,
+  messages: [],      // {role, content, reply?, references?, selected?, dropped?, tokens_used?}
   reuseCounts: {},
-  lastDecision: null,
 };
 
-// ============================================================
-// Mermaid init
-// ============================================================
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "neutral",
-  themeVariables: {
-    primaryColor: "#6366f1",
-    primaryTextColor: "#fff",
-    primaryBorderColor: "#4f46e5",
-    lineColor: "#94a3b8",
-    secondaryColor: "#eef2ff",
-    tertiaryColor: "#f8fafc",
-  },
-  fontFamily: "Inter, system-ui, sans-serif",
-});
-
-// ============================================================
-// Marked config
-// ============================================================
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
-
-// ============================================================
-// DOM helpers
-// ============================================================
+// ── Helpers ────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "")
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 
-function scrollToBottom() {
-  const h = $("chat-history");
-  h.scrollTop = h.scrollHeight;
+function scrollBottom() {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 }
 
-function autoGrow(el) {
-  el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 160) + "px";
-}
+// ── Mermaid + Marked ───────────────────────────────────────────
+mermaid.initialize({ startOnLoad: false, theme: "neutral",
+  fontFamily: "Inter, system-ui, sans-serif" });
 
-function handleKeydown(e) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-}
+marked.setOptions({ breaks: true, gfm: true });
 
-function sendSuggestion(btn) {
-  const text = btn.textContent.trim();
-  $("chat-input").value = text;
-  sendMessage();
-}
-
-// ============================================================
-// New chat
-// ============================================================
-function startNewChat() {
-  state.messages = [];
-  state.reuseCounts = {};
-  state.lastDecision = null;
-  const chatEl = $("chat-history");
-  if (chatEl) chatEl.innerHTML = "";
-  // Re-insert welcome card
-  const welcome = document.createElement("div");
-  welcome.id = "welcome-card";
-  welcome.className = "max-w-2xl mx-auto";
-  welcome.innerHTML = `
-    <div class="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 text-center">
-      <div class="w-12 h-12 bg-indigo-100 rounded-2xl mx-auto flex items-center justify-center mb-3">
-        <svg class="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-      </div>
-      <h2 class="text-lg font-semibold text-slate-900 mb-1">ML Systems Tutor</h2>
-      <p class="text-sm text-slate-500 mb-4">Ask me anything about transformers, training, inference, or ML systems engineering.</p>
-      <div class="flex flex-wrap justify-center gap-2">
-        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">What is KV caching and why does it matter?</button>
-        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">Explain flash attention vs vanilla attention</button>
-        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">How does pipeline parallelism work?</button>
-        <button onclick="sendSuggestion(this)" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1.5 hover:bg-indigo-100 transition-colors">Walk me through the transformer architecture</button>
-      </div>
-    </div>`;
-  if (chatEl) chatEl.appendChild(welcome);
-  // Reset routing drawer content
-  const routingContent = $("routing-content");
-  if (routingContent) {
-    routingContent.innerHTML = `<div class="text-xs text-slate-400 text-center py-8">Ask a question to see routing details.</div>`;
-  }
-  $("chat-input")?.focus();
-}
-window.startNewChat = startNewChat;
-
-// ============================================================
-// Routing drawer toggle
-// ============================================================
-function toggleRoutingDrawer() {
-  const drawer = $("right-drawer");
-  const btn = $("routingToggle");
-  if (!drawer || !btn) return;
-  const isOpen = !drawer.classList.contains("hidden");
-  if (isOpen) {
-    drawer.classList.add("hidden");
-    btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10" /></svg> Show routing`;
-  } else {
-    drawer.classList.remove("hidden");
-    btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10" /></svg> Hide routing`;
-  }
-}
-// Legacy alias (used from showRefDetail which opens the drawer directly)
-function toggleDrawer() { toggleRoutingDrawer(); }
-window.toggleDrawer = toggleDrawer;
-
-// ============================================================
-// Load topics
-// ============================================================
-async function loadTopics() {
-  try {
-    const res = await fetch(`${API_BASE}/api/topics`);
-    if (!res.ok) return;
-    const topics = await res.json();
-
-    // Populate header select
-    const sel = $("topic-select");
-    topics.forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.id;
-      opt.textContent = t.title;
-      sel.appendChild(opt);
-    });
-
-    // Populate left nav grouped by area
-    const list = $("topic-list");
-    list.innerHTML = "";
-
-    const areas = {};
-    topics.forEach((t) => {
-      if (!areas[t.area]) areas[t.area] = [];
-      areas[t.area].push(t);
-    });
-
-    const areaLabels = {
-      A: "Model fundamentals",
-      B: "Training systems",
-      C: "Inference infra",
-      D: "Data & alignment",
-      E: "Agent systems",
-    };
-
-    Object.entries(areas).forEach(([area, aTopics]) => {
-      const areaDiv = document.createElement("div");
-      areaDiv.className = "mb-2";
-
-      const header = document.createElement("div");
-      header.className = "text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 py-1 mt-1";
-      header.textContent = areaLabels[area] || area;
-      areaDiv.appendChild(header);
-
-      aTopics.forEach((t) => {
-        const item = document.createElement("div");
-        item.className = "topic-item text-xs text-slate-600 rounded-lg px-2 py-1.5";
-        item.textContent = t.title;
-        item.dataset.topicId = t.id;
-        item.onclick = () => selectTopic(t.id, item);
-        areaDiv.appendChild(item);
-      });
-
-      list.appendChild(areaDiv);
-    });
-  } catch (err) {
-    console.error("loadTopics error", err);
-  }
-}
-
-function selectTopic(topicId, itemEl) {
-  // Update state
-  state.topicId = topicId;
-  $("topic-select").value = topicId;
-
-  // Highlight
-  document.querySelectorAll(".topic-item").forEach((el) => el.classList.remove("active"));
-  if (itemEl) itemEl.classList.add("active");
-}
-
-// ============================================================
-// Load chat history
-// ============================================================
-async function loadHistory() {
-  try {
-    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/messages?limit=40`);
-    if (!r.ok) return;
-    const data = await r.json();
-    if (!data.messages || data.messages.length === 0) return;
-
-    // Clear existing chat UI + state.messages
-    state.messages = [];
-    const chatEl = $("chat-history");
-    if (chatEl) chatEl.innerHTML = "";
-
-    // Add a subtle "earlier session" separator before restored messages
-    const sep = document.createElement("div");
-    sep.className = "max-w-3xl mx-auto my-1";
-    sep.innerHTML = `<div class="flex items-center gap-2">
-      <div class="flex-1 border-t border-slate-200"></div>
-      <span class="text-xs text-slate-400 italic px-2">earlier session</span>
-      <div class="flex-1 border-t border-slate-200"></div>
-    </div>`;
-    chatEl.appendChild(sep);
-
-    // Replay each message
-    for (const m of data.messages) {
-      state.messages.push({
-        role: m.role,
-        content: m.content,
-        references: [],   // not stored; restored messages have inline [shortid] markers
-        restored: true,
-        timestamp: m.timestamp,
-      });
-      const idx = state.messages.length - 1;
-      let el;
-      if (m.role === "user") {
-        el = renderUserMessage(state.messages[idx]);
-      } else {
-        el = renderAssistantMessage(state.messages[idx], idx);
-      }
-      chatEl.appendChild(el);
-    }
-
-    // Hide the welcome card if there are messages
-    const welcome = $("welcome-card");
-    if (welcome) welcome.style.display = "none";
-
-    scrollToBottom();
-  } catch (e) {
-    console.warn("loadHistory failed:", e);
-  }
-}
-
-// ============================================================
-// Student state
-// ============================================================
-async function refreshStudentState() {
-  const sid = $("student-id").value.trim() || "demo-user";
-  try {
-    const res = await fetch(`${API_BASE}/api/student/${encodeURIComponent(sid)}/state`);
-    if (!res.ok) return;
-    const data = await res.json();
-    const el = $("student-state-summary");
-    const masteryCount = data.mastery?.length ?? 0;
-    const miscCount = data.misconceptions?.length ?? 0;
-    el.innerHTML = `
-      <div class="flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        <span>${masteryCount} mastery entries</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 rounded-full ${miscCount > 0 ? 'bg-amber-400' : 'bg-slate-300'}"></span>
-        <span>${miscCount} active misconception${miscCount !== 1 ? 's' : ''}</span>
-      </div>`;
-  } catch (err) {
-    console.error("refreshStudentState error", err);
-  }
-}
-window.refreshStudentState = refreshStudentState;
-
-// ============================================================
-// Markdown + Mermaid rendering
-// ============================================================
 function renderMarkdown(text) {
-  // Extract mermaid blocks before markdown parsing so they're not escaped
-  const mermaidBlocks = [];
-  const placeholder = (i) => `__MERMAID_${i}__`;
-
-  const processed = text.replace(/```mermaid\s*([\s\S]*?)```/g, (_, code) => {
-    const idx = mermaidBlocks.length;
-    mermaidBlocks.push(code.trim());
-    return `\n${placeholder(idx)}\n`;
+  const blocks = [];
+  const ph = (i) => `MERMAID_PLACEHOLDER_${i}`;
+  const withPh = text.replace(/```mermaid\s*([\s\S]*?)```/g, (_, code) => {
+    blocks.push(code.trim());
+    return `\n${ph(blocks.length - 1)}\n`;
   });
-
-  // Parse markdown
-  let html = DOMPurify.sanitize(marked.parse(processed));
-
-  // Substitute mermaid placeholders with <pre class="mermaid">
-  mermaidBlocks.forEach((code, i) => {
+  let html = DOMPurify.sanitize(marked.parse(withPh));
+  blocks.forEach((code, i) => {
     const safe = DOMPurify.sanitize(code, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
     html = html.replace(
-      new RegExp(`<p>${placeholder(i)}</p>|${placeholder(i)}`, "g"),
+      new RegExp(`<p>${ph(i)}</p>|${ph(i)}`, "g"),
       `<pre class="mermaid">${safe}</pre>`
     );
   });
-
   return html;
 }
 
-async function renderMermaidInEl(el) {
-  const blocks = el.querySelectorAll("pre.mermaid");
-  if (blocks.length === 0) return;
-  try {
-    await mermaid.run({ nodes: Array.from(blocks) });
-  } catch (err) {
-    blocks.forEach((b) => {
-      b.style.color = "#ef4444";
-      b.style.fontSize = "0.75rem";
-      b.textContent = "[Diagram render error] " + err.message;
-    });
+async function runMermaid(el) {
+  const nodes = [...el.querySelectorAll("pre.mermaid")];
+  if (!nodes.length) return;
+  try { await mermaid.run({ nodes }); } catch (e) {
+    nodes.forEach((n) => { n.style.color = "#ef4444"; n.textContent = "[diagram error] " + e.message; });
   }
 }
 
-// ============================================================
-// Message rendering
-// ============================================================
-function createThinkingIndicator() {
-  const div = document.createElement("div");
-  div.className = "flex items-start gap-3 max-w-3xl mx-auto msg-assistant";
-  div.id = "thinking-indicator";
-  div.innerHTML = `
-    <div class="w-8 h-8 rounded-xl bg-indigo-100 flex-shrink-0 flex items-center justify-center mt-0.5">
-      <svg class="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.345A3.001 3.001 0 0112 21a3.001 3.001 0 01-2.091-.755l-.348-.345z" />
-      </svg>
-    </div>
-    <div class="bg-white border border-slate-200 rounded-2xl px-5 py-4 shadow-sm flex-1">
-      <div class="thinking-dots flex items-center gap-1 h-5">
-        <span></span><span></span><span></span>
-      </div>
-    </div>`;
-  return div;
-}
-
-function renderUserMessage(msg) {
-  const div = document.createElement("div");
-  div.className = "flex items-end justify-end gap-2 max-w-3xl mx-auto msg-user";
-  div.innerHTML = `
-    <div class="bg-indigo-600 text-white rounded-2xl rounded-br-md px-4 py-3 max-w-xl shadow-sm">
-      <p class="text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
-    </div>
-    <div class="w-7 h-7 rounded-full bg-slate-200 flex-shrink-0 flex items-center justify-center mb-0.5">
-      <svg class="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-      </svg>
-    </div>`;
-  return div;
-}
-
-function renderAssistantMessage(msg, msgIdx) {
-  const div = document.createElement("div");
-  div.className = "flex items-start gap-3 max-w-3xl mx-auto msg-assistant";
-  div.dataset.msgIdx = msgIdx;
-
-  const bodyHtml = renderMarkdown(msg.content);
-
-  // References section
-  let refsHtml = "";
-  if (msg.references && msg.references.length > 0) {
-    const pills = msg.references
-      .map(
-        (r) =>
-          `<span class="ref-pill" title="${escapeHtml(r.title)}" onclick="showRefDetail(${msgIdx}, '${r.id}')">[${r.n}] ${escapeHtml(r.title.length > 30 ? r.title.slice(0, 30) + "…" : r.title)}</span>`
-      )
-      .join("");
-    refsHtml = `<div class="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t border-slate-100">${pills}</div>`;
-  }
-
-  // Token usage badge
-  const tokensBadge =
-    msg.tokens_used != null
-      ? `<span class="text-xs text-slate-400">${msg.tokens_used} / ${state.budget} tokens</span>`
-      : "";
-
-  div.innerHTML = `
-    <div class="w-8 h-8 rounded-xl bg-indigo-100 flex-shrink-0 flex items-center justify-center mt-0.5">
-      <svg class="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.345A3.001 3.001 0 0112 21a3.001 3.001 0 01-2.091-.755l-.348-.345z" />
-      </svg>
-    </div>
-    <div class="bg-white border border-slate-200 rounded-2xl px-5 py-4 shadow-sm flex-1 min-w-0">
-      <div class="prose-chat text-sm text-slate-700">${bodyHtml}</div>
-      ${refsHtml}
-      <div class="flex items-center justify-between mt-2.5">
-        ${tokensBadge}
-        <button onclick="triggerQuizInline(${msgIdx})"
-          class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1 ml-auto">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-          </svg>
-          Test me
-        </button>
-      </div>
-      <div class="quiz-container mt-1"></div>
-    </div>`;
-
-  return div;
-}
-
-function renderQuizCard(msgIdx, quiz, container) {
-  container.innerHTML = "";
-  if (!quiz) return;
-
-  const card = document.createElement("div");
-  card.className = "quiz-card";
-
-  if (quiz.state === "loading") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2 text-xs text-slate-500">
-        <div class="thinking-dots"><span></span><span></span><span></span></div>
-        Generating question…
-      </div>`;
-  } else if (quiz.state === "question") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2 mb-2">
-        <span class="text-base">🎯</span>
-        <span class="text-sm font-semibold text-slate-800">Challenge</span>
-      </div>
-      <p class="text-sm text-slate-700 leading-relaxed mb-3">${escapeHtml(quiz.question)}</p>
-      <textarea id="quiz-answer-${msgIdx}" rows="2"
-        class="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none bg-slate-50 placeholder-slate-400"
-        placeholder="Your answer…"></textarea>
-      <div class="flex items-center justify-between mt-2">
-        <span class="text-xs text-slate-400 italic">Be as detailed as you like.</span>
-        <button onclick="submitQuizAnswer(${msgIdx})"
-          class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg px-3 py-1.5 transition-colors">
-          Submit answer
-        </button>
-      </div>`;
-  } else if (quiz.state === "scoring") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2 text-xs text-slate-500">
-        <div class="thinking-dots"><span></span><span></span><span></span></div>
-        Grading your answer…
-      </div>`;
-  } else if (quiz.state === "scored") {
-    const score = quiz.score ?? 0;
-    const pct = Math.round(score * 100);
-    const color = score >= 0.8 ? "emerald" : score >= 0.5 ? "amber" : "red";
-    const emoji = score >= 0.8 ? "✅" : score >= 0.5 ? "🔶" : "❌";
-    const label = score >= 0.8 ? "Excellent" : score >= 0.5 ? "Partial" : "Needs work";
-
-    card.innerHTML = `
-      <div class="flex items-center gap-2 mb-3">
-        <span class="text-base">${emoji}</span>
-        <span class="text-sm font-semibold text-slate-800">Result: ${label}</span>
-        <span class="ml-auto text-lg font-bold text-${color}-600">${pct}%</span>
-      </div>
-      <div class="h-2 bg-slate-100 rounded-full mb-3 overflow-hidden">
-        <div class="h-full bg-${color}-500 rounded-full transition-all" style="width:${pct}%"></div>
-      </div>
-      <p class="text-xs text-slate-500 italic leading-relaxed">${escapeHtml(quiz.rationale ?? "")}</p>
-      <div class="quiz-diagnostic-container mt-2"></div>
-      ${
-        score < 0.6
-          ? `<button onclick="startDiagnosticFromQuiz(${msgIdx})"
-              class="mt-2 text-xs bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 font-medium rounded-lg px-3 py-1.5 transition-colors flex items-center gap-1.5 w-full justify-center">
-              🧭 Let's figure out what went wrong
-            </button>`
-          : ""
-      }`;
-  }
-
-  container.appendChild(card);
-}
-
-function renderDiagnosticCard(msgIdx, diag, container) {
-  if (!diag) return;
-  container.innerHTML = "";
-
-  const card = document.createElement("div");
-  card.className = "diagnostic-card";
-
-  if (diag.state === "loading") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2 text-xs text-amber-600">
-        <div class="thinking-dots"><span></span><span></span><span></span></div>
-        Analyzing your answer…
-      </div>`;
-  } else if (diag.state === "follow_up") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2 mb-2">
-        <span class="text-base">🧭</span>
-        <span class="text-sm font-semibold text-amber-800">Let's understand what went wrong</span>
-      </div>
-      <p class="text-xs text-slate-500 italic mb-2.5">${escapeHtml(diag.diagnosis)}</p>
-      <p class="text-sm text-slate-700 font-medium leading-relaxed mb-3">${escapeHtml(diag.follow_up_question)}</p>
-      <textarea id="diag-answer-${msgIdx}" rows="2"
-        class="w-full text-sm border border-amber-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-amber-50/50 placeholder-slate-400"
-        placeholder="Your response…"></textarea>
-      <div class="flex justify-end mt-2">
-        <button onclick="submitDiagnosticAnswer(${msgIdx})"
-          class="text-xs bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg px-3 py-1.5 transition-colors">
-          Continue
-        </button>
-      </div>`;
-  } else if (diag.state === "explaining") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2 text-xs text-amber-600">
-        <div class="thinking-dots"><span></span><span></span><span></span></div>
-        Formulating response…
-      </div>`;
-  } else if (diag.state === "result") {
-    const actionLabel = { explain: "Continue explaining", re_test: "Re-test me", wrap_up: "Got it!" };
-    const actionStyle = {
-      explain: "bg-indigo-600 hover:bg-indigo-700 text-white",
-      re_test: "bg-amber-500 hover:bg-amber-600 text-white",
-      wrap_up: "bg-emerald-600 hover:bg-emerald-700 text-white",
-    };
-    const nextAction = diag.next_action || "wrap_up";
-
-    card.innerHTML = `
-      <div class="flex items-center gap-2 mb-2">
-        <span class="text-base">💡</span>
-        <span class="text-sm font-semibold text-slate-800">Tutor's response</span>
-      </div>
-      <div class="prose-chat text-sm text-slate-700 mb-3">${renderMarkdown(diag.next_message || diag.explanation || "")}</div>
-      <button onclick="handleDiagnosticAction(${msgIdx}, '${nextAction}')"
-        class="text-xs ${actionStyle[nextAction] || actionStyle.wrap_up} font-medium rounded-lg px-3 py-1.5 transition-colors">
-        ${actionLabel[nextAction] || "Done"}
-      </button>`;
-  } else if (diag.state === "done") {
-    card.innerHTML = `
-      <div class="flex items-center gap-2">
-        <span class="text-base">✅</span>
-        <span class="text-sm font-semibold text-emerald-700">Great work! Misconception recorded.</span>
-      </div>`;
-  }
-
-  container.appendChild(card);
-}
-
-// ============================================================
-// Quiz
-// ============================================================
-window.triggerQuizInline = async function (msgIdx) {
-  const topicId = state.topicId || ($("topic-select").value || null);
-  if (!topicId) {
-    alert("Select a topic first to generate a quiz question.");
-    return;
-  }
-  const msgEl = document.querySelector(`[data-msg-idx="${msgIdx}"]`);
-  if (!msgEl) return;
-  const container = msgEl.querySelector(".quiz-container");
-  if (!container) return;
-
-  state.messages[msgIdx].quiz = { state: "loading", topicId };
-  renderQuizCard(msgIdx, state.messages[msgIdx].quiz, container);
-
-  try {
-    const res = await fetch(`${API_BASE}/api/quiz/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic_id: topicId }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    state.messages[msgIdx].quiz = { state: "question", topicId, ...data };
-    renderQuizCard(msgIdx, state.messages[msgIdx].quiz, container);
-  } catch (err) {
-    state.messages[msgIdx].quiz = null;
-    container.innerHTML = `<p class="text-xs text-red-500 mt-2">Error generating quiz: ${escapeHtml(err.message)}</p>`;
-  }
-};
-
-window.triggerQuiz = function () {
-  // Triggered from the header quiz button — attaches to the last assistant message
-  const idx = state.messages.findLastIndex((m) => m.role === "assistant");
-  if (idx < 0) {
-    alert("Ask a question first, then I can generate a quiz on the topic.");
-    return;
-  }
-  triggerQuizInline(idx);
-};
-
-window.submitQuizAnswer = async function (msgIdx) {
-  const msg = state.messages[msgIdx];
-  if (!msg?.quiz) return;
-  const textarea = $(`quiz-answer-${msgIdx}`);
-  const answer = textarea?.value.trim();
-  if (!answer) {
-    textarea?.focus();
-    return;
-  }
-
-  const msgEl = document.querySelector(`[data-msg-idx="${msgIdx}"]`);
-  const container = msgEl?.querySelector(".quiz-container");
-  if (!container) return;
-
-  msg.quiz.state = "scoring";
-  msg.quiz.student_answer = answer;
-  renderQuizCard(msgIdx, msg.quiz, container);
-
-  const sid = $("student-id").value.trim() || "demo-user";
-  try {
-    const res = await fetch(`${API_BASE}/api/quiz/score`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        student_id: sid,
-        topic_id: msg.quiz.topicId,
-        question: msg.quiz.question,
-        rubric: msg.quiz.rubric,
-        answer,
-      }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    msg.quiz = { ...msg.quiz, state: "scored", ...data };
-    renderQuizCard(msgIdx, msg.quiz, container);
-  } catch (err) {
-    container.innerHTML = `<p class="text-xs text-red-500 mt-2">Error scoring: ${escapeHtml(err.message)}</p>`;
-  }
-};
-
-// ============================================================
-// Diagnostic
-// ============================================================
-window.startDiagnosticFromQuiz = async function (msgIdx) {
-  const msg = state.messages[msgIdx];
-  if (!msg?.quiz) return;
-
-  const msgEl = document.querySelector(`[data-msg-idx="${msgIdx}"]`);
-  const container = msgEl?.querySelector(".quiz-diagnostic-container");
-  if (!container) return;
-
-  msg.diagnostic = { state: "loading" };
-  renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-
-  try {
-    const res = await fetch(`${API_BASE}/api/diagnostic/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        original_question: msg.quiz.question,
-        rubric: msg.quiz.rubric,
-        student_answer: msg.quiz.student_answer || "",
-        score: msg.quiz.score || 0,
-      }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    msg.diagnostic = { state: "follow_up", turnIndex: 1, ...data };
-    renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-  } catch (err) {
-    container.innerHTML = `<p class="text-xs text-red-500 mt-2">Error: ${escapeHtml(err.message)}</p>`;
-  }
-};
-
-window.submitDiagnosticAnswer = async function (msgIdx) {
-  const msg = state.messages[msgIdx];
-  if (!msg?.diagnostic) return;
-  const textarea = $(`diag-answer-${msgIdx}`);
-  const answer = textarea?.value.trim();
-  if (!answer) { textarea?.focus(); return; }
-
-  const msgEl = document.querySelector(`[data-msg-idx="${msgIdx}"]`);
-  const container = msgEl?.querySelector(".quiz-diagnostic-container");
-  if (!container) return;
-
-  msg.diagnostic.state = "explaining";
-  msg.diagnostic.student_answer = answer;
-  renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-
-  const sid = $("student-id").value.trim() || "demo-user";
-  try {
-    const res = await fetch(`${API_BASE}/api/diagnostic/turn`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        student_id: sid,
-        original_question: msg.quiz.question,
-        diagnosis: msg.diagnostic.diagnosis,
-        follow_up_question: msg.diagnostic.follow_up_question,
-        student_answer: answer,
-        turn_index: msg.diagnostic.turnIndex || 1,
-      }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    msg.diagnostic = { ...msg.diagnostic, state: "result", ...data };
-    renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-  } catch (err) {
-    container.innerHTML = `<p class="text-xs text-red-500 mt-2">Error: ${escapeHtml(err.message)}</p>`;
-  }
-};
-
-window.handleDiagnosticAction = async function (msgIdx, action) {
-  const msg = state.messages[msgIdx];
-  if (!msg?.diagnostic) return;
-
-  const msgEl = document.querySelector(`[data-msg-idx="${msgIdx}"]`);
-  const container = msgEl?.querySelector(".quiz-diagnostic-container");
-
-  if (action === "wrap_up") {
-    msg.diagnostic = { ...msg.diagnostic, state: "done" };
-    renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-  } else if (action === "re_test") {
-    // Generate fresh quiz question on same topic
-    msg.diagnostic = { ...msg.diagnostic, state: "done" };
-    renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-    triggerQuizInline(msgIdx);
-  } else {
-    // "explain" — cycle another turn asking a follow-up
-    // Reset to follow_up state with a new question from the tutor message
-    const followUp = msg.diagnostic.next_message || msg.diagnostic.explanation;
-    msg.diagnostic = {
-      ...msg.diagnostic,
-      state: "follow_up",
-      follow_up_question: followUp,
-      turnIndex: (msg.diagnostic.turnIndex || 1) + 1,
-    };
-    renderDiagnosticCard(msgIdx, msg.diagnostic, container);
-  }
-};
-
-// ============================================================
-// References
-// ============================================================
-window.showRefDetail = function (msgIdx, refId) {
-  const msg = state.messages[msgIdx];
-  if (!msg) return;
-  const item = msg.selected?.find((it) => it.id === refId)
-    || msg.dropped?.find((it) => it.id === refId);
-  if (!item) return;
-
-  // Show in routing drawer (open it if closed)
-  const drawer = $("right-drawer");
-  if (drawer.classList.contains("hidden")) {
-    toggleRoutingDrawer();
-  }
-  const content = $("routing-content");
-  content.innerHTML = `
-    <div class="mb-3">
-      <button onclick="renderRoutingDetails(${msgIdx})"
-        class="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1">
-        ← Back to routing
-      </button>
-    </div>
-    <h3 class="text-sm font-semibold text-slate-800 mb-1">${escapeHtml(item.title)}</h3>
-    <div class="flex flex-wrap gap-1.5 mb-3">
-      ${scoreChip("Total", item.score_total, "indigo")}
-      ${scoreChip("Relevance", item.score_relevance, "blue")}
-      ${scoreChip("Recency", item.score_recency, "cyan")}
-      ${scoreChip("Misc.", item.score_misconception, "amber")}
-      ${scoreChip("Prereq", item.score_prerequisite, "emerald")}
-      ${scoreChip("Reuse", item.score_reuse, "rose")}
-    </div>
-    <div class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3 leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap font-mono">${escapeHtml(item.body.slice(0, 1000))}${item.body.length > 1000 ? "\n…" : ""}</div>`;
-};
-
-function scoreChip(label, value, color) {
-  const pct = Math.round((value || 0) * 100);
-  return `<span class="text-xs bg-${color}-50 text-${color}-700 border border-${color}-200 rounded-full px-2 py-0.5">${label}: ${pct}%</span>`;
-}
-
-// ============================================================
-// Routing drawer
-// ============================================================
-function renderRoutingDetails(msgIdx) {
-  const msg = state.messages[msgIdx];
-  if (!msg || !msg.selected) {
-    $("routing-content").innerHTML = `<div class="text-xs text-slate-400 text-center py-8">No routing data.</div>`;
-    return;
-  }
-
-  const sel = msg.selected;
-  const dropped = msg.dropped || [];
-
-  let html = `
-    <div class="mb-3">
-      <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
-        <span>Budget</span>
-        <span class="font-medium">${msg.tokens_used ?? 0} / ${state.budget}</span>
-      </div>
-      <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-        <div class="h-full bg-indigo-500 rounded-full" style="width:${Math.min(100, Math.round(((msg.tokens_used ?? 0) / state.budget) * 100))}%"></div>
-      </div>
-    </div>
-
-    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Selected (${sel.length})</p>`;
-
-  sel.forEach((it) => {
-    html += routingItemHtml(it, "emerald", msgIdx);
+// ── Citation substitution ──────────────────────────────────────
+function substituteCitations(text, references) {
+  // references is array of {id, n, title, ...}
+  if (!references || !references.length) return text;
+  let out = text;
+  references.forEach((r) => {
+    out = out.replaceAll(`[${r.id}]`, `[${r.n}]`);
   });
+  return out;
+}
 
-  if (dropped.length > 0) {
-    html += `<p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-3 mb-2">Dropped top (${dropped.length})</p>`;
-    dropped.forEach((it) => {
-      html += routingItemHtml(it, "slate", msgIdx);
+// ── Starter cards ──────────────────────────────────────────────
+const STARTERS = [
+  { icon: "🧠", title: "How does the KV cache work?", sub: "Foundations of inference" },
+  { icon: "⚡", title: "Explain PagedAttention", sub: "vLLM internals" },
+  { icon: "🔧", title: "Train a two-tower recommender", sub: "Build a recsys" },
+  { icon: "📊", title: "What's the math behind RoPE?", sub: "Long context" },
+  { icon: "🎯", title: "Compare DDP, FSDP, and tensor parallelism", sub: "Distributed training" },
+  { icon: "🚀", title: "Design an ad ranking system", sub: "ML system design" },
+];
+
+function buildStarterGrid() {
+  const grid = $("starterGrid");
+  STARTERS.forEach(({ icon, title, sub }) => {
+    const btn = document.createElement("button");
+    btn.className = [
+      "starter-card text-left bg-white border border-gray-200 rounded-2xl p-4",
+      "hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors",
+      "shadow-[0_1px_2px_rgba(17,24,39,0.05)]",
+    ].join(" ");
+    btn.innerHTML = `<div class="text-xl mb-2">${icon}</div>
+      <div class="text-sm font-medium text-gray-900 leading-snug">${esc(title)}</div>
+      <div class="text-xs text-gray-500 mt-0.5">${esc(sub)}</div>`;
+    btn.addEventListener("click", () => sendMessage(title));
+    grid.appendChild(btn);
+  });
+}
+
+// ── Topics ─────────────────────────────────────────────────────
+async function loadTopics() {
+  try {
+    const r = await fetch("/api/topics");
+    if (!r.ok) return;
+    const topics = await r.json();
+    const sel = $("topicSelect");
+    topics.forEach((t) => {
+      const o = document.createElement("option");
+      o.value = t.id; o.textContent = t.title;
+      sel.appendChild(o);
     });
+  } catch (_) {}
+}
+
+// ── Message rendering ──────────────────────────────────────────
+function thinkingEl() {
+  const d = document.createElement("div");
+  d.id = "thinking";
+  d.className = "msg-row py-4";
+  d.innerHTML = `<div class="thinking-dots flex items-center gap-1 h-5 pl-1">
+    <span></span><span></span><span></span>
+  </div>`;
+  return d;
+}
+
+function appendUserBubble(text) {
+  const row = document.createElement("div");
+  row.className = "msg-row flex justify-end py-2";
+  row.innerHTML = `<div class="max-w-[80%] bg-gray-100 rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-gray-900">${esc(text)}</div>`;
+  $("chat").appendChild(row);
+}
+
+function appendAssistantMessage(msg, msgIdx) {
+  const row = document.createElement("div");
+  row.className = "msg-row group py-4 border-b border-gray-100";
+  row.dataset.msgIdx = msgIdx;
+
+  // Substitute citations then render markdown
+  const citedText = substituteCitations(msg.content, msg.references);
+  const bodyHtml = renderMarkdown(citedText);
+
+  // Build references block
+  let refsHtml = "";
+  if (msg.references && msg.references.length) {
+    const items = msg.references.map((r) =>
+      `<div class="text-xs text-gray-500"><span class="font-medium text-gray-700">[${r.n}]</span> ${esc(r.title)}</div>`
+    ).join("");
+    refsHtml = `<details class="refs mt-3">
+      <summary>Sources ▾</summary>
+      <div class="mt-1 space-y-0.5 pl-1">${items}</div>
+    </details>`;
   }
 
-  $("routing-content").innerHTML = html;
+  row.innerHTML = `
+    <div class="prose-chat text-sm text-gray-800 leading-relaxed">${bodyHtml}</div>
+    ${refsHtml}
+    <div class="msg-footer mt-2 flex items-center gap-3 text-xs text-gray-400">
+      <button class="btn-test hover:text-indigo-600 transition-colors" title="Test yourself">🎯 Test yourself</button>
+      <button class="btn-ctx hover:text-indigo-600 transition-colors" title="View context">🔍 View context</button>
+      <button class="btn-regen hover:text-indigo-600 transition-colors" title="Regenerate">🔁 Regenerate</button>
+      <button class="btn-copy hover:text-indigo-600 transition-colors" title="Copy">📋 Copy</button>
+    </div>
+    <div class="quiz-area mt-2"></div>`;
+
+  // Wire footer buttons
+  row.querySelector(".btn-test").addEventListener("click", () => triggerQuiz(row, msgIdx));
+  row.querySelector(".btn-ctx").addEventListener("click", () => openRoutingModal(msg));
+  row.querySelector(".btn-regen").addEventListener("click", () => regenerate(msgIdx));
+  row.querySelector(".btn-copy").addEventListener("click", () => copyReply(msg.content));
+
+  $("chat").appendChild(row);
+  runMermaid(row);
+  return row;
 }
 
-function routingItemHtml(it, colorClass, msgIdx) {
-  const pct = Math.round((it.score_total || 0) * 100);
-  return `
-    <div class="mb-2 cursor-pointer hover:bg-slate-50 rounded-lg p-1.5 -mx-1" onclick="showRefDetail(${msgIdx}, '${it.id}')">
-      <div class="text-xs text-slate-700 font-medium leading-snug mb-1">${escapeHtml(it.title.length > 40 ? it.title.slice(0, 40) + "…" : it.title)}</div>
-      <div class="routing-score-row">
-        <span class="routing-score-label">total</span>
-        <div class="routing-score-track">
-          <div class="routing-score-fill bg-${colorClass}-500" style="width:${pct}%"></div>
-        </div>
-        <span class="text-xs text-slate-500 w-8 text-right">${pct}%</span>
-      </div>
-    </div>`;
+// ── Thinking indicator ─────────────────────────────────────────
+function showThinking() {
+  const el = thinkingEl();
+  $("chat").appendChild(el);
+  scrollBottom();
+  return el;
 }
 
-// ============================================================
-// Send message
-// ============================================================
-async function sendMessage() {
-  const input = $("chat-input");
-  const text = input.value.trim();
+// ── Send message ───────────────────────────────────────────────
+async function sendMessage(text) {
+  text = (text ?? $("msgInput").value).trim();
   if (!text) return;
 
-  // Clear welcome card
-  const welcome = $("welcome-card");
-  if (welcome) welcome.remove();
+  // Hide welcome, show chat
+  $("welcome").classList.add("hidden");
 
-  // Sync state from UI
-  state.studentId = $("student-id").value.trim() || "demo-user";
-  state.topicId = $("topic-select").value || null;
-  state.budget = parseInt($("budget-slider").value, 10) || 3000;
+  // Sync settings
+  state.studentId = $("studentIdInput").value.trim() || "you";
+  state.topicId = $("topicSelect").value || null;
+  state.budget = parseInt($("budgetSlider").value, 10) || 3000;
 
-  // Push user message
-  const userMsg = { role: "user", content: text };
-  state.messages.push(userMsg);
-  const userEl = renderUserMessage(userMsg);
-  $("chat-history").appendChild(userEl);
+  // Append user bubble
+  state.messages.push({ role: "user", content: text });
+  appendUserBubble(text);
 
   // Clear input
-  input.value = "";
-  input.style.height = "auto";
+  $("msgInput").value = "";
+  $("msgInput").style.height = "auto";
+  $("sendBtn").disabled = true;
 
-  // Disable input while waiting
-  input.disabled = true;
-  $("send-btn").disabled = true;
-
-  // Show thinking
-  const thinking = createThinkingIndicator();
-  $("chat-history").appendChild(thinking);
-  scrollToBottom();
+  // Thinking indicator
+  const thinking = showThinking();
+  setInputLocked(true);
 
   try {
-    const res = await fetch(`${API_BASE}/api/chat`, {
+    const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -873,24 +214,20 @@ async function sendMessage() {
         reuse_counts: state.reuseCounts,
       }),
     });
-
     thinking.remove();
 
     if (!res.ok) {
-      const errText = await res.text();
-      appendErrorMessage(errText);
+      appendError(await res.text());
       return;
     }
-
     const data = await res.json();
 
-    // Update reuse counts
     data.selected?.forEach((it) => {
       state.reuseCounts[it.id] = (state.reuseCounts[it.id] || 0) + 1;
     });
 
     const msgIdx = state.messages.length;
-    const assistantMsg = {
+    const aMsg = {
       role: "assistant",
       content: data.reply,
       references: data.references,
@@ -898,103 +235,364 @@ async function sendMessage() {
       dropped: data.dropped,
       tokens_used: data.tokens_used,
     };
-    state.messages.push(assistantMsg);
-    state.lastDecision = data;
-
-    const el = renderAssistantMessage(assistantMsg, msgIdx);
-    $("chat-history").appendChild(el);
-
-    // Render mermaid diagrams
-    await renderMermaidInEl(el);
-
-    // Update routing drawer
-    renderRoutingDetails(msgIdx);
-
-    scrollToBottom();
-    refreshStudentState();
+    state.messages.push(aMsg);
+    appendAssistantMessage(aMsg, msgIdx);
+    scrollBottom();
   } catch (err) {
     thinking.remove();
-    appendErrorMessage(err.message);
+    appendError(err.message);
   } finally {
-    input.disabled = false;
-    $("send-btn").disabled = false;
-    input.focus();
+    setInputLocked(false);
+    $("msgInput").focus();
   }
 }
-window.sendMessage = sendMessage;
 
-function appendErrorMessage(text) {
-  const div = document.createElement("div");
-  div.className = "max-w-3xl mx-auto";
-  div.innerHTML = `
-    <div class="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-4 py-3 text-sm">
-      <strong>Error:</strong> ${escapeHtml(text)}
+function setInputLocked(locked) {
+  $("msgInput").disabled = locked;
+}
+
+function appendError(text) {
+  const d = document.createElement("div");
+  d.className = "my-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700";
+  d.textContent = "Error: " + text;
+  $("chat").appendChild(d);
+  scrollBottom();
+}
+
+// ── Regenerate ─────────────────────────────────────────────────
+async function regenerate(msgIdx) {
+  // Find the user message that preceded this assistant turn
+  let userText = null;
+  for (let i = msgIdx - 1; i >= 0; i--) {
+    if (state.messages[i].role === "user") { userText = state.messages[i].content; break; }
+  }
+  if (!userText) return;
+  // Remove the current assistant message element from DOM
+  const row = $("chat").querySelector(`[data-msg-idx="${msgIdx}"]`);
+  if (row) row.remove();
+  state.messages.splice(msgIdx, 1);
+  await sendMessage(userText);
+}
+
+// ── Copy ───────────────────────────────────────────────────────
+async function copyReply(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    prompt("Copy:", text);
+  }
+}
+
+// ── Routing modal ──────────────────────────────────────────────
+function openRoutingModal(msg) {
+  const body = $("routingBody");
+  const sel = msg.selected || [];
+  const dropped = msg.dropped || [];
+  const tokensUsed = msg.tokens_used ?? 0;
+  const budget = state.budget;
+
+  const pct = Math.min(100, Math.round((tokensUsed / budget) * 100));
+  let html = `<div class="mb-4">
+    <div class="flex justify-between text-xs text-gray-500 mb-1">
+      <span>Token budget</span><span>${tokensUsed} / ${budget}</span>
+    </div>
+    <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
+      <div class="h-full bg-indigo-500 rounded-full" style="width:${pct}%"></div>
+    </div>
+  </div>`;
+
+  if (sel.length) {
+    html += `<p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Selected (${sel.length})</p>`;
+    sel.forEach((it) => { html += routingItemHtml(it, "indigo"); });
+  }
+
+  if (dropped.length) {
+    html += `<details class="mt-4">
+      <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Dropped top (${dropped.length}) ▾</summary>
+      <div class="mt-2 space-y-2">${dropped.slice(0,5).map((it) => routingItemHtml(it, "gray")).join("")}</div>
+    </details>`;
+  }
+
+  body.innerHTML = html;
+  const modal = $("routingModal");
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+}
+
+function routingItemHtml(it, color) {
+  const scores = [
+    ["relevance", it.score_relevance],
+    ["recency", it.score_recency],
+    ["misc.", it.score_misconception],
+    ["prereq", it.score_prerequisite],
+    ["reuse", it.score_reuse],
+    ["total", it.score_total],
+  ].filter(([, v]) => v != null);
+
+  const bars = scores.map(([label, val]) => {
+    const p = Math.round((val || 0) * 100);
+    return `<div class="flex items-center gap-2 text-xs">
+      <span class="w-14 text-gray-400 flex-shrink-0">${label}</span>
+      <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div class="h-full bg-${color}-400 rounded-full" style="width:${p}%"></div>
+      </div>
+      <span class="w-8 text-right text-gray-500">${p}%</span>
     </div>`;
-  $("chat-history").appendChild(div);
-  scrollToBottom();
+  }).join("");
+
+  return `<div class="rounded-xl border border-gray-100 bg-gray-50 p-3 mb-2">
+    <div class="text-sm font-medium text-gray-800 mb-2 leading-snug">${esc(it.title)}</div>
+    ${bars}
+    ${it.body ? `<p class="mt-2 text-xs text-gray-500 line-clamp-2">${esc(it.body.slice(0,200))}</p>` : ""}
+  </div>`;
 }
 
-// ============================================================
-// Utilities
-// ============================================================
-function escapeHtml(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function closeRoutingModal() {
+  const modal = $("routingModal");
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
 }
 
-// ============================================================
-// Header / settings controls
-// ============================================================
-$("budget-slider").addEventListener("input", (e) => {
+// ── Quiz ───────────────────────────────────────────────────────
+async function triggerQuiz(row, msgIdx) {
+  const topicId = state.topicId || $("topicSelect").value || null;
+  if (!topicId) { alert("Select a topic first to generate a quiz."); return; }
+
+  const area = row.querySelector(".quiz-area");
+  area.innerHTML = `<div class="quiz-card border border-indigo-200"><div class="flex items-center gap-2 text-xs text-gray-500"><div class="thinking-dots"><span></span><span></span><span></span></div> Generating question…</div></div>`;
+
+  try {
+    const res = await fetch("/api/quiz/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic_id: topicId }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { question, rubric } = await res.json();
+    renderQuizQuestion(area, msgIdx, question, rubric, topicId);
+  } catch (err) {
+    area.innerHTML = `<p class="text-xs text-red-500 mt-1">Quiz error: ${esc(err.message)}</p>`;
+  }
+}
+
+function renderQuizQuestion(area, msgIdx, question, rubric, topicId) {
+  const card = document.createElement("div");
+  card.className = "quiz-card border border-indigo-200";
+  card.innerHTML = `<div class="flex items-center justify-between mb-2">
+    <span class="text-sm font-semibold text-gray-800">🎯 Quick check</span>
+    <button class="text-gray-400 hover:text-gray-600 text-xs dismiss-quiz">&#x2715;</button>
+  </div>
+  <p class="text-sm text-gray-700 mb-3">${esc(question)}</p>
+  <textarea rows="3" class="quiz-textarea w-full text-sm border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none bg-gray-50 placeholder-gray-400" placeholder="Your answer…"></textarea>
+  <div class="flex justify-end mt-2">
+    <button class="quiz-submit text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg px-3 py-1.5 transition-colors">Submit</button>
+  </div>
+  <div class="quiz-result mt-2"></div>`;
+
+  card.querySelector(".dismiss-quiz").addEventListener("click", () => { area.innerHTML = ""; });
+  card.querySelector(".quiz-submit").addEventListener("click", () => submitQuiz(card, msgIdx, question, rubric, topicId));
+  area.innerHTML = "";
+  area.appendChild(card);
+}
+
+async function submitQuiz(card, msgIdx, question, rubric, topicId) {
+  const answer = card.querySelector(".quiz-textarea").value.trim();
+  if (!answer) { card.querySelector(".quiz-textarea").focus(); return; }
+
+  const result = card.querySelector(".quiz-result");
+  result.innerHTML = `<div class="flex items-center gap-2 text-xs text-gray-500"><div class="thinking-dots"><span></span><span></span><span></span></div> Grading…</div>`;
+
+  try {
+    const res = await fetch("/api/quiz/score", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: state.studentId, topic_id: topicId, question, rubric, answer }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { score, rationale } = await res.json();
+    const pct = Math.round(score * 100);
+    const color = score >= 0.8 ? "green" : score >= 0.6 ? "amber" : "red";
+    result.innerHTML = `<div class="flex items-center gap-2 mb-1">
+      <span class="text-xl font-bold text-${color}-600">${pct}%</span>
+      <span class="text-xs text-gray-500">${score >= 0.8 ? "Great work!" : score >= 0.6 ? "Partial — keep going." : "Needs more work."}</span>
+    </div>
+    <p class="text-xs text-gray-600 italic">${esc(rationale)}</p>`;
+
+    if (score < 0.6) {
+      const diagBtn = document.createElement("button");
+      diagBtn.className = "mt-2 text-xs bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 font-medium rounded-lg px-3 py-1.5 transition-colors";
+      diagBtn.textContent = "🧭 Understand what went wrong";
+      diagBtn.addEventListener("click", () => startDiagnostic(card, question, rubric, answer, score));
+      result.appendChild(diagBtn);
+    }
+  } catch (err) {
+    result.innerHTML = `<p class="text-xs text-red-500">Error: ${esc(err.message)}</p>`;
+  }
+}
+
+// ── Diagnostic ─────────────────────────────────────────────────
+async function startDiagnostic(quizCard, question, rubric, studentAnswer, score) {
+  const area = quizCard.closest(".quiz-area");
+  if (!area) return;
+
+  const diagCard = document.createElement("div");
+  diagCard.className = "diagnostic-card border border-amber-200";
+  diagCard.innerHTML = `<div class="flex items-center gap-2 text-xs text-amber-600"><div class="thinking-dots"><span></span><span></span><span></span></div> Analyzing…</div>`;
+  area.appendChild(diagCard);
+  scrollBottom();
+
+  try {
+    const res = await fetch("/api/diagnostic/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ original_question: question, rubric, student_answer: studentAnswer, score }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderDiagFollowUp(diagCard, data, question, 1);
+  } catch (err) {
+    diagCard.innerHTML = `<p class="text-xs text-red-500">Error: ${esc(err.message)}</p>`;
+  }
+}
+
+function renderDiagFollowUp(card, data, originalQuestion, turnIndex) {
+  card.innerHTML = `<div class="mb-2">
+    <span class="text-sm font-semibold text-amber-800">🧭 Let's figure this out</span>
+    <p class="text-xs text-gray-500 italic mt-0.5">${esc(data.diagnosis)}</p>
+  </div>
+  <p class="text-sm text-gray-800 font-medium mb-3">${esc(data.follow_up_question)}</p>
+  <textarea rows="2" class="diag-textarea w-full text-sm border border-amber-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-amber-50/50 placeholder-gray-400" placeholder="Your response…"></textarea>
+  <div class="flex justify-end mt-2">
+    <button class="diag-submit text-xs bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg px-3 py-1.5 transition-colors">Continue</button>
+  </div>
+  <div class="diag-result mt-2"></div>`;
+
+  card.querySelector(".diag-submit").addEventListener("click", () =>
+    continueDiagnostic(card, originalQuestion, data, turnIndex)
+  );
+}
+
+async function continueDiagnostic(card, originalQuestion, diagData, turnIndex) {
+  const answer = card.querySelector(".diag-textarea")?.value.trim();
+  if (!answer) { card.querySelector(".diag-textarea")?.focus(); return; }
+
+  const result = card.querySelector(".diag-result");
+  result.innerHTML = `<div class="flex items-center gap-2 text-xs text-amber-600"><div class="thinking-dots"><span></span><span></span><span></span></div> Thinking…</div>`;
+
+  try {
+    const res = await fetch("/api/diagnostic/turn", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_id: state.studentId,
+        original_question: originalQuestion,
+        diagnosis: diagData.diagnosis,
+        follow_up_question: diagData.follow_up_question,
+        student_answer: answer,
+        turn_index: turnIndex,
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+
+    result.innerHTML = `<div class="prose-chat text-sm text-gray-700 mb-3">${renderMarkdown(data.next_message || data.explanation || "")}</div>`;
+    if (data.next_action && data.next_action !== "wrap_up") {
+      const nextBtn = document.createElement("button");
+      nextBtn.className = "text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg px-3 py-1.5 transition-colors";
+      nextBtn.textContent = "Next →";
+      nextBtn.addEventListener("click", () => {
+        renderDiagFollowUp(card, { diagnosis: diagData.diagnosis, follow_up_question: data.next_message || "" }, originalQuestion, turnIndex + 1);
+      });
+      result.appendChild(nextBtn);
+    } else {
+      const doneEl = document.createElement("p");
+      doneEl.className = "text-xs text-emerald-700 font-medium mt-1";
+      doneEl.textContent = "✅ Great — misconception recorded.";
+      result.appendChild(doneEl);
+    }
+  } catch (err) {
+    result.innerHTML = `<p class="text-xs text-red-500">Error: ${esc(err.message)}</p>`;
+  }
+}
+
+// ── Load history ───────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/messages?limit=40`);
+    if (!r.ok) return;
+    const { messages } = await r.json();
+    if (!messages || !messages.length) return;
+
+    $("welcome").classList.add("hidden");
+
+    // separator
+    const sep = document.createElement("div");
+    sep.className = "flex items-center gap-2 my-2";
+    sep.innerHTML = `<div class="flex-1 border-t border-gray-200"></div><span class="text-xs text-gray-400 italic px-2">earlier session</span><div class="flex-1 border-t border-gray-200"></div>`;
+    $("chat").appendChild(sep);
+
+    messages.forEach((m, i) => {
+      const idx = state.messages.length;
+      state.messages.push({ role: m.role, content: m.content, references: [] });
+      if (m.role === "user") appendUserBubble(m.content);
+      else appendAssistantMessage(state.messages[idx], idx);
+    });
+    scrollBottom();
+  } catch (_) {}
+}
+
+// ── New chat ───────────────────────────────────────────────────
+function newChat() {
+  state.messages = [];
+  state.reuseCounts = {};
+  $("chat").innerHTML = "";
+  $("welcome").classList.remove("hidden");
+  $("msgInput").focus();
+}
+
+// ── Events ─────────────────────────────────────────────────────
+$("msgInput").addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = Math.min(this.scrollHeight, 200) + "px";
+  $("sendBtn").disabled = !this.value.trim();
+});
+
+$("msgInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+$("sendBtn").addEventListener("click", () => sendMessage());
+
+$("newChatBtn").addEventListener("click", newChat);
+
+$("budgetSlider").addEventListener("input", (e) => {
   state.budget = parseInt(e.target.value, 10);
-  $("budget-label").textContent = state.budget;
+  $("budgetVal").textContent = state.budget;
 });
 
-$("topic-select").addEventListener("change", (e) => {
+$("studentIdInput").addEventListener("change", (e) => {
+  state.studentId = e.target.value.trim() || "you";
+  state.reuseCounts = {};
+  state.messages = [];
+  $("chat").innerHTML = "";
+  $("welcome").classList.remove("hidden");
+  loadHistory();
+});
+
+$("topicSelect").addEventListener("change", (e) => {
   state.topicId = e.target.value || null;
-  // Sync left nav highlight
-  document.querySelectorAll(".topic-item").forEach((el) => {
-    el.classList.toggle("active", el.dataset.topicId === state.topicId);
-  });
 });
 
-let _historyDebounceTimer = null;
-
-$("student-id").addEventListener("input", (e) => {
-  // Debounce: wait 500ms after typing stops before reloading history
-  clearTimeout(_historyDebounceTimer);
-  const newId = e.target.value.trim() || "demo-user";
-  _historyDebounceTimer = setTimeout(() => {
-    state.studentId = newId;
-    state.reuseCounts = {};  // reset reuse on student switch
-    refreshStudentState();
-    loadHistory();
-  }, 500);
+$("clearHistoryBtn").addEventListener("click", () => {
+  newChat();
+  $("overflowMenu").removeAttribute("open");
 });
 
-$("student-id").addEventListener("change", (e) => {
-  state.studentId = e.target.value.trim() || "demo-user";
-  state.reuseCounts = {};  // reset reuse on student switch
-  refreshStudentState();
-});
+// Routing modal close
+$("routingClose").addEventListener("click", closeRoutingModal);
+$("routingBackdrop").addEventListener("click", closeRoutingModal);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRoutingModal(); });
 
-// New chat + routing drawer toggle
-$("newChatBtn")?.addEventListener("click", startNewChat);
-$("newChatBtnLeft")?.addEventListener("click", startNewChat);
-$("routingToggle")?.addEventListener("click", toggleRoutingDrawer);
-$("routingClose")?.addEventListener("click", toggleRoutingDrawer);
-
-// ============================================================
-// Bootstrap
-// ============================================================
+// ── Init ───────────────────────────────────────────────────────
 (async () => {
+  buildStarterGrid();
   await loadTopics();
-  await refreshStudentState();
   await loadHistory();
-  $("chat-input").focus();
+  $("msgInput").focus();
 })();

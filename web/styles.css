@@ -1,70 +1,83 @@
-/* Learning Memory OS — custom CSS layer on top of Tailwind */
+/* Foundry — chat-specific CSS layer on top of Tailwind */
 
-/* ---- Base / typography ---- */
-* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 
-body {
-  font-family: 'Inter', system-ui, sans-serif;
-  background: #f8fafc;
-}
+body { font-family: 'Inter', system-ui, sans-serif; }
 
-/* ---- Scrollbars ---- */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-/* ---- Auto-grow textarea ---- */
-.auto-grow-textarea {
+/* Auto-grow textarea */
+#msgInput {
+  min-height: 24px;
+  max-height: 200px;
   resize: none;
-  overflow-y: auto;
-  max-height: 160px;
-  min-height: 44px;
-  transition: height 0.1s ease;
-  field-sizing: content; /* progressive enhancement — Chrome 123+ */
 }
 
-/* ---- Chat messages ---- */
-#chat-history {
-  scroll-behavior: smooth;
+/* Hide webkit scrollbar inside chat for cleaner look */
+#chat::-webkit-scrollbar { display: none; }
+
+/* Message hover footer reveal */
+.msg-row { display: flex; flex-direction: column; }
+.msg-footer {
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+.msg-row:hover .msg-footer { opacity: 1; }
+
+/* Mermaid container */
+.mermaid {
+  margin: 12px 0;
+  background: #fafbff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid svg { max-width: 100%; height: auto; }
+
+/* References disclosure */
+details.refs > summary { cursor: pointer; color: #6b7280; font-size: 12px; user-select: none; }
+details.refs[open] > summary { color: #4b5563; }
+
+/* Quiz card */
+.quiz-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  box-shadow: 0 1px 2px rgba(17,24,39,0.05);
 }
 
-.msg-user {
-  animation: slideInRight 0.2s ease-out;
+/* Diagnostic card */
+.diagnostic-card {
+  background: #fffbeb;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  box-shadow: 0 1px 2px rgba(17,24,39,0.05);
 }
 
-.msg-assistant {
-  animation: slideInLeft 0.2s ease-out;
-}
+/* Starter cards on hover */
+.starter-card:focus { outline: 2px solid #6366f1; outline-offset: 2px; }
 
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(8px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes slideInLeft {
-  from { opacity: 0; transform: translateX(-8px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
-/* ---- Markdown inside chat ---- */
-.prose-chat h2 { font-size: 1rem; font-weight: 600; margin: 0.75rem 0 0.25rem; color: #1e293b; }
-.prose-chat h3 { font-size: 0.9rem; font-weight: 600; margin: 0.5rem 0 0.2rem; color: #334155; }
+/* Markdown prose inside chat */
+.prose-chat h1 { font-size: 1.1rem; font-weight: 700; margin: 0.8rem 0 0.3rem; color: #111827; }
+.prose-chat h2 { font-size: 1rem; font-weight: 600; margin: 0.75rem 0 0.25rem; color: #111827; }
+.prose-chat h3 { font-size: 0.9rem; font-weight: 600; margin: 0.5rem 0 0.2rem; color: #374151; }
 .prose-chat p  { margin: 0.35rem 0; line-height: 1.65; }
 .prose-chat ul { padding-left: 1.25rem; margin: 0.35rem 0; list-style: disc; }
 .prose-chat ol { padding-left: 1.25rem; margin: 0.35rem 0; list-style: decimal; }
 .prose-chat li { margin: 0.15rem 0; line-height: 1.55; }
 .prose-chat code {
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-size: 0.82em;
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-family: ui-monospace, 'Fira Code', monospace;
 }
 .prose-chat pre {
-  background: #0f172a;
-  color: #e2e8f0;
+  background: #111827;
+  color: #e5e7eb;
   border-radius: 10px;
   padding: 1rem;
   overflow-x: auto;
@@ -72,109 +85,24 @@ body {
   font-size: 0.8rem;
   line-height: 1.6;
 }
-.prose-chat pre code {
-  background: transparent;
-  border: none;
-  padding: 0;
-  color: inherit;
-  font-size: inherit;
-}
+.prose-chat pre code { background: transparent; border: none; padding: 0; color: inherit; font-size: inherit; }
 .prose-chat blockquote {
   border-left: 3px solid #6366f1;
   margin: 0.5rem 0;
   padding-left: 0.75rem;
-  color: #64748b;
+  color: #6b7280;
   font-style: italic;
 }
 .prose-chat a { color: #6366f1; text-decoration: underline; }
-.prose-chat strong { font-weight: 600; color: #1e293b; }
+.prose-chat strong { font-weight: 600; color: #111827; }
+.prose-chat table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; font-size: 0.85em; }
+.prose-chat th { background: #f9fafb; font-weight: 600; }
+.prose-chat th, .prose-chat td { border: 1px solid #e5e7eb; padding: 0.4rem 0.6rem; text-align: left; }
 
-/* ---- References pill ---- */
-.ref-pill {
-  display: inline-flex;
-  align-items: center;
-  background: #eef2ff;
-  color: #4f46e5;
-  border: 1px solid #c7d2fe;
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 0.7rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.ref-pill:hover { background: #e0e7ff; }
-
-/* ---- Score badge ---- */
-.score-bar-fill {
-  transition: width 0.4s ease;
-}
-
-/* ---- Quiz card ---- */
-.quiz-card {
-  border-left: 3px solid #6366f1;
-  background: #fff;
-  border-radius: 12px;
-  padding: 1rem 1.25rem;
-  margin-top: 0.75rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-
-/* ---- Diagnostic card ---- */
-.diagnostic-card {
-  border-left: 3px solid #f59e0b;
-  background: #fffbeb;
-  border-radius: 12px;
-  padding: 1rem 1.25rem;
-  margin-top: 0.75rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-
-/* ---- Mermaid diagrams ---- */
-.mermaid {
-  text-align: center;
-  margin: 0.75rem 0;
-  overflow-x: auto;
-}
-.mermaid svg {
-  max-width: 100%;
-  height: auto;
-}
-
-/* ---- Sidebar / nav ---- */
-.topic-item {
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.topic-item:hover { background: #eef2ff; color: #4338ca; }
-.topic-item.active { background: #eef2ff; color: #4338ca; font-weight: 500; }
-
-/* ---- Routing drawer ---- */
-.routing-score-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
-}
-.routing-score-label { width: 5rem; font-size: 0.7rem; color: #64748b; flex-shrink: 0; }
-.routing-score-track {
-  flex: 1;
-  height: 5px;
-  background: #f1f5f9;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.routing-score-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.4s ease;
-}
-
-/* ---- Thinking / loading ---- */
+/* Thinking dots */
 .thinking-dots span {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: 6px; height: 6px;
   background: #6366f1;
   border-radius: 50%;
   margin: 0 2px;
@@ -186,36 +114,16 @@ body {
 
 @keyframes bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
-  40% { transform: translateY(-6px); opacity: 1; }
+  40%            { transform: translateY(-6px); opacity: 1; }
 }
 
-/* ---- Input area ---- */
-#input-area {
-  background: white;
-  border-top: 1px solid #e2e8f0;
-}
+/* Overflow menu: hide default details marker */
+#overflowMenu > summary::-webkit-details-marker { display: none; }
+#overflowMenu > summary::marker { display: none; }
 
-/* ---- Right drawer toggle button ---- */
-#routingToggle {
-  writing-mode: initial;
-  transition: background 0.15s;
+/* Message slide-in animations */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-
-/* ---- Settings gear dropdown: hide default marker ---- */
-#settingsMenu > summary::-webkit-details-marker { display: none; }
-#settingsMenu > summary::marker { display: none; }
-
-/* ---- Collapsible sections ---- */
-.collapse-icon {
-  transition: transform 0.2s ease;
-}
-.collapsed .collapse-icon {
-  transform: rotate(-90deg);
-}
-
-/* ---- Responsive: hide side panels on small screens ---- */
-@media (max-width: 1024px) {
-  #left-nav { display: none; }
-  #right-drawer { display: none; }
-  #center-col { grid-column: span 12; }
-}
+.msg-row { animation: fadeUp 0.18s ease-out; }
