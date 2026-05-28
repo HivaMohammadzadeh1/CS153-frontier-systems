@@ -27,6 +27,12 @@ from learning_memory_os.agents.tutor import TutorAgent
 from learning_memory_os.logging_utils.interactions import InteractionLogger
 from learning_memory_os.ingestion.topic_loader import load_topics, resolve_prerequisite_titles
 from learning_memory_os.eval.quiz import QuizQuestion, score_answer
+from learning_memory_os.memory.xtrace import XTraceClient, xtrace_to_memory_item
+from learning_memory_os.agents.topic_inference import (
+    TopicCentroid,
+    TopicCentroids,
+    infer_topic,
+)
 
 # Optional mermaid renderer — fall back gracefully if unavailable
 try:
@@ -267,6 +273,50 @@ def _llm_and_embedder():
 
 
 @st.cache_resource
+def _xtrace_client() -> XTraceClient | None:
+    s = _settings()
+    if not s.xtrace_api_key or not s.xtrace_org_id:
+        return None
+    return XTraceClient(
+        api_key=s.xtrace_api_key,
+        org_id=s.xtrace_org_id,
+        base_url=s.xtrace_base_url,
+    )
+
+
+@st.cache_resource
+def _topic_centroids() -> TopicCentroids:
+    """Build per-topic centroids from each topic's existing semantic-item embeddings."""
+    topics = _topics()
+    conn = _new_conn()
+    centroids: list[TopicCentroid] = []
+    try:
+        semantic = SemanticStore(conn)
+        for t in topics:
+            try:
+                items = semantic.by_topic(t.id)
+            except Exception:
+                items = []
+            vectors = [it.embedding for it in items if it.embedding]
+            if not vectors:
+                continue
+            dim = len(vectors[0])
+            mean = [0.0] * dim
+            for v in vectors:
+                for i in range(dim):
+                    mean[i] += v[i]
+            mean = [x / len(vectors) for x in mean]
+            import math as _m
+            norm = _m.sqrt(sum(x * x for x in mean))
+            if norm > 0:
+                mean = [x / norm for x in mean]
+            centroids.append(TopicCentroid(topic_id=t.id, vector=mean))
+    finally:
+        conn.close()
+    return TopicCentroids(centroids)
+
+
+@st.cache_resource
 def _artifact_count() -> int:
     """Total number of semantic artifacts in the DB (fetched once at startup)."""
     conn = _new_conn()
@@ -318,6 +368,11 @@ def _init_session():
         st.session_state.pending_prompt = None
     if "show_context_analysis" not in st.session_state:
         st.session_state.show_context_analysis = False
+    if "last_inferred_topic" not in st.session_state:
+        st.session_state.last_inferred_topic = None
+    if "chat_session_id" not in st.session_state:
+        import uuid as _uuid
+        st.session_state.chat_session_id = f"chat_{_uuid.uuid4().hex[:12]}"
 
 
 # ---------------------------------------------------------------------------
@@ -533,10 +588,18 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
 
     student_id = st.sidebar.text_input("Student ID", value=student_id_default)
 
+    # Topic chooser lives in the main-area header now (see _render_topic_header).
+    # We still read its value here so downstream code that expects topic_id keeps working.
     topics = _topics()
-    topic_options = ["(global vector search)"] + [t.id for t in topics]
-    topic_choice = st.sidebar.selectbox("Topic focus", topic_options, index=0)
-    topic_id = None if topic_choice == "(global vector search)" else topic_choice
+    if "topic_choice" not in st.session_state:
+        st.session_state.topic_choice = "(auto)"
+    topic_choice = st.session_state.topic_choice
+    topic_id = None if topic_choice == "(auto)" else topic_choice
+
+    # XTrace status indicator (still surfaced in sidebar as a system note).
+    xtrace = _xtrace_client()
+    if xtrace is None:
+        st.sidebar.caption(":grey[Long-term memory: off (set XTRACE_API_KEY)]")
 
     budget = st.sidebar.slider(
         "Token budget", min_value=1000, max_value=32000, value=3000, step=500
@@ -592,6 +655,10 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
             st.session_state.diagnostic = {}
             st.session_state.pending_prompt = None
             st.session_state.show_context_analysis = False
+            st.session_state.last_inferred_topic = None
+            # Fresh chat → fresh conv_id so XTrace starts a new Episode.
+            import uuid as _uuid
+            st.session_state.chat_session_id = f"chat_{_uuid.uuid4().hex[:12]}"
             st.rerun()
         if c2.button("Cancel"):
             st.session_state.confirm_clear = False
@@ -1239,11 +1306,40 @@ def _handle_turn(
         episodic = EpisodicStore(conn)
         topics_cfg = _topics()
 
+        # Conversation-level topic inference when no manual topic is pinned.
+        if topic_id is None:
+            try:
+                centroids = _topic_centroids()
+                result = infer_topic(
+                    conversation=list(st.session_state.messages),
+                    centroids=centroids,
+                    embed_fn=embedder.embed_one,
+                )
+                st.session_state.last_inferred_topic = {
+                    "topic_id": result.topic_id,
+                    "confidence": result.confidence,
+                    "decision": result.decision,
+                }
+                if result.decision in ("auto", "inferred") and result.topic_id:
+                    topic_id = result.topic_id
+            except Exception:
+                st.session_state.last_inferred_topic = {
+                    "topic_id": None,
+                    "confidence": 0.0,
+                    "decision": "ask",
+                }
+
         if topic_id:
             candidates = semantic.by_topic(topic_id)
         else:
             q_emb = embedder.embed_one(prompt)
             candidates = semantic.vector_search(query=q_emb, k=20)
+
+        # 5th memory tier: XTrace long-horizon recall.
+        xtrace = _xtrace_client()
+        if xtrace is not None:
+            for hit in xtrace.recall(student_id=student_id, query=prompt, k=5):
+                candidates.append(xtrace_to_memory_item(hit))
 
         misconceptions_list = student_store.active_misconceptions(student_id)
         misconceptions = {m["id"] for m in misconceptions_list}
@@ -1306,6 +1402,17 @@ def _handle_turn(
         )
         conn.commit()
 
+        # Long-horizon memory write: ingest the user's turn under the current
+        # chat's stable conv_id so XTrace groups every turn of this chat into a
+        # single Episode automatically. No explicit "end session" needed.
+        xtrace = _xtrace_client()
+        if xtrace is not None:
+            xtrace.ingest_fact(
+                student_id=student_id,
+                text=prompt,
+                conv_id=st.session_state.chat_session_id,
+            )
+
         st.session_state.last_decision = {
             "selected": [
                 {
@@ -1351,37 +1458,160 @@ def _handle_turn(
 # ---------------------------------------------------------------------------
 
 
-def _render_welcome(topic_id: str | None):
-    topic_label = topic_id if topic_id else "any ML systems topic"
+def _render_topic_header(*, expanded: bool) -> str | None:
+    """In-content topic chooser. Lives above the chat; visible on every turn.
+
+    When `expanded=True` (no messages yet), renders as a full welcome card with
+    explanatory text + the picker + starter prompts. When False, collapses to a
+    slim bar showing the current/inferred topic with a 'change' control.
+
+    Writes `st.session_state.topic_choice` and returns the resolved topic_id
+    (None means auto-detect at turn time).
+    """
+    topics = _topics()
+    topic_options = ["(auto)"] + [t.id for t in topics]
+
+    inferred = st.session_state.get("last_inferred_topic")
+    inferred_label = ""
+    if inferred and inferred.get("topic_id"):
+        dec = inferred.get("decision", "ask")
+        verb = "auto" if dec == "auto" else "inferred"
+        inferred_label = f"{verb} → **{inferred['topic_id']}** (conf {inferred['confidence']:.2f})"
+    elif inferred and inferred.get("decision") == "ask":
+        inferred_label = f"no confident topic yet (conf {inferred.get('confidence', 0.0):.2f}) — tutor will ask"
+
+    if expanded:
+        with st.container(border=True):
+            st.markdown(
+                "<h2 style='margin:0 0 8px 0; color:#1f2235;'>Welcome — I'm your ML systems tutor.</h2>"
+                "<p style='color:#555; font-size:1.02rem; margin:0 0 16px 0;'>"
+                "Pick a topic below, then ask anything. Leave it on <strong>(auto)</strong> "
+                "and I'll figure out the topic from what you ask. "
+                "I'll give you a concise answer, a diagram when helpful, and always invite you to go deeper."
+                "</p>",
+                unsafe_allow_html=True,
+            )
+            col_select, col_status = st.columns([2, 3])
+            with col_select:
+                st.selectbox(
+                    "Topic",
+                    topic_options,
+                    key="topic_choice",
+                    label_visibility="collapsed",
+                )
+            with col_status:
+                if st.session_state.topic_choice == "(auto)":
+                    if inferred_label:
+                        st.markdown(f"<div style='padding-top:6px; color:#444;'>{inferred_label}</div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(
+                            "<div style='padding-top:6px; color:#888;'>Topic will be inferred from your first message.</div>",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.markdown(
+                        f"<div style='padding-top:6px; color:#444;'>Focused on <strong>{st.session_state.topic_choice}</strong></div>",
+                        unsafe_allow_html=True,
+                    )
+
+        # Starter prompts below the card.
+        topic_id_for_starters = (
+            None if st.session_state.topic_choice == "(auto)" else st.session_state.topic_choice
+        )
+        starters = _starter_prompts_for(topic_id_for_starters)
+        if starters:
+            st.markdown("**Jump in with:**")
+            cols = st.columns(len(starters))
+            for i, (col, prompt) in enumerate(zip(cols, starters)):
+                if col.button(prompt, key=f"starter_{i}"):
+                    st.session_state.pending_prompt = prompt
+                    st.rerun()
+    else:
+        # Slim, always-visible header during conversation.
+        with st.container(border=True):
+            col_select, col_status = st.columns([1, 2])
+            with col_select:
+                st.selectbox(
+                    "Topic",
+                    topic_options,
+                    key="topic_choice",
+                    label_visibility="collapsed",
+                )
+            with col_status:
+                if st.session_state.topic_choice == "(auto)":
+                    label = inferred_label or "Topic will be inferred per turn."
+                    st.markdown(
+                        f"<div style='padding-top:6px; color:#555;'>{label}</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='padding-top:6px; color:#555;'>Focused on <strong>{st.session_state.topic_choice}</strong></div>",
+                        unsafe_allow_html=True,
+                    )
+
+    return None if st.session_state.topic_choice == "(auto)" else st.session_state.topic_choice
+
+
+def _render_memory_tab(student_id: str):
+    """Full-width 'What you've worked on' inspector for the Memory tab."""
+    xtrace = _xtrace_client()
+    if xtrace is None:
+        st.info(
+            "Long-term memory is disabled. Set `XTRACE_API_KEY` and `XTRACE_ORG_ID` "
+            "in `.env`, then restart Streamlit to enable saving sessions across time."
+        )
+        return
+
+    try:
+        items = xtrace.list_memories(student_id=student_id, limit=100)
+    except Exception as exc:
+        st.error(f"Could not load long-term memory: {exc}")
+        return
+
+    episodes = [it for it in items if it.kind == "episode"]
+    facts = [it for it in items if it.kind == "fact"]
+
     st.markdown(
-        f"""
-<div style="
-    background: #f5f7fb;
-    border-radius: 12px;
-    padding: 24px 28px;
-    margin-bottom: 16px;
-    border-left: 4px solid #5b6cff;
-">
-<h2 style="margin-top:0; color:#1f2235;">Welcome — I'm your ML systems tutor.</h2>
-<p style="color:#444; font-size:1.05rem;">
-    Pick a topic on the left, then ask anything — or click one of the starter prompts below to dive in.
-    I'll give you a concise answer, a diagram when helpful, and always invite you to go deeper.
-</p>
-<p style="color:#888; font-size:0.9rem; margin-bottom:0;">
-    Currently focused on: <strong>{topic_label}</strong>
-</p>
-</div>
-""",
+        "<h2 style='margin:0 0 4px 0;'>What you've worked on</h2>"
+        "<p style='color:#777; margin:0 0 20px 0;'>Long-term memory across every session you've had with this tutor.</p>",
         unsafe_allow_html=True,
     )
 
-    starters = _starter_prompts_for(topic_id)
-    st.markdown("**Jump in with:**")
-    cols = st.columns(len(starters))
-    for i, (col, prompt) in enumerate(zip(cols, starters)):
-        if col.button(prompt, key=f"starter_{i}"):
-            st.session_state.pending_prompt = prompt
-            st.rerun()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Sessions saved", len(episodes))
+    c2.metric("Facts captured", len(facts))
+    c3.metric("Total memories", len(items))
+
+    st.divider()
+
+    if not items:
+        st.markdown(
+            "<div style='padding:32px; text-align:center; color:#888;'>"
+            "Nothing here yet. Have a conversation in the Chat tab, then click "
+            "<strong>End session</strong> in the sidebar to save what you worked on."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    if episodes:
+        st.markdown("### Past sessions")
+        for ep in episodes:
+            with st.container(border=True):
+                st.markdown(
+                    f"<div style='color:#888; font-size:0.85rem; margin-bottom:6px;'>"
+                    f"Session memory · sim {ep.similarity:.2f}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(ep.text)
+
+    if facts:
+        st.markdown("### Things the tutor remembers about you")
+        for f in facts:
+            with st.container(border=True):
+                st.markdown(f.text)
 
 
 # ---------------------------------------------------------------------------
@@ -1444,70 +1674,74 @@ def main():
     _inject_css()
     _render_hero()
 
-    # Left sidebar
+    # Left sidebar (sidebar no longer owns topic selection).
     student_id, topic_id, budget = _render_left_sidebar()
 
-    # Three-zone layout: main chat (3) + right drawer (1)
-    main_col, right_col = st.columns([3, 1])
+    chat_tab, memory_tab = st.tabs(["Chat", "Memory"])
 
-    with main_col:
-        # Welcome screen when chat is empty
-        if not st.session_state.messages:
-            _render_welcome(topic_id)
-        else:
-            # Suggested follow-ups instead of starter chips once chat has messages
-            _render_suggested_followups(topic_id)
+    with memory_tab:
+        _render_memory_tab(student_id)
 
-        # Replay chat history
-        for idx, msg in enumerate(st.session_state.messages):
-            with st.chat_message(msg["role"]):
-                if msg["role"] == "assistant":
-                    selected_items = []
-                    if idx == len(st.session_state.messages) - 1 and st.session_state.last_decision:
-                        selected_items = st.session_state.last_decision.get("selected", [])
-                    rendered = _render_citations(msg["content"], selected_items)
-                    _render_with_mermaid(rendered)
-                    # Quiz button below each assistant message
-                    _render_quiz_for_message(idx, topic_id, student_id)
-                else:
-                    st.markdown(msg["content"])
+    with chat_tab:
+        # In-content topic chooser. Expanded layout when chat is empty,
+        # slim layout once a conversation is going.
+        topic_id = _render_topic_header(expanded=not st.session_state.messages)
 
-        # Handle pending prompt (chip click)
-        active_prompt: str | None = None
-        if st.session_state.pending_prompt:
-            active_prompt = st.session_state.pending_prompt
-            st.session_state.pending_prompt = None
+        # Three-zone layout inside Chat: main chat (3) + right drawer (1)
+        main_col, right_col = st.columns([3, 1])
 
-        prompt = st.chat_input("Ask the tutor a question...")
-        if active_prompt:
-            prompt = active_prompt
+        with main_col:
+            if st.session_state.messages:
+                _render_suggested_followups(topic_id)
 
-        if prompt:
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+            # Replay chat history
+            for idx, msg in enumerate(st.session_state.messages):
+                with st.chat_message(msg["role"]):
+                    if msg["role"] == "assistant":
+                        selected_items = []
+                        if idx == len(st.session_state.messages) - 1 and st.session_state.last_decision:
+                            selected_items = st.session_state.last_decision.get("selected", [])
+                        rendered = _render_citations(msg["content"], selected_items)
+                        _render_with_mermaid(rendered)
+                        _render_quiz_for_message(idx, topic_id, student_id)
+                    else:
+                        st.markdown(msg["content"])
 
-            with st.chat_message("assistant"):
-                with st.spinner("Selecting context and generating response..."):
-                    reply = _handle_turn(prompt, student_id, topic_id, budget)
-                selected_items = (
-                    st.session_state.last_decision.get("selected", [])
-                    if st.session_state.last_decision
-                    else []
-                )
-                rendered_reply = _render_citations(reply, selected_items)
-                _render_with_mermaid(rendered_reply)
-                new_msg_idx = len(st.session_state.messages)
-                _render_quiz_for_message(new_msg_idx, topic_id, student_id)
+            # Handle pending prompt (chip click)
+            active_prompt: str | None = None
+            if st.session_state.pending_prompt:
+                active_prompt = st.session_state.pending_prompt
+                st.session_state.pending_prompt = None
 
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            st.rerun()
+            prompt = st.chat_input("Ask the tutor a question...")
+            if active_prompt:
+                prompt = active_prompt
 
-        # Context analysis expander (below chat, full width)
-        _render_context_analysis()
+            if prompt:
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
-    with right_col:
-        _render_right_pane(right_col, topic_id, student_id)
+                with st.chat_message("assistant"):
+                    with st.spinner("Selecting context and generating response..."):
+                        reply = _handle_turn(prompt, student_id, topic_id, budget)
+                    selected_items = (
+                        st.session_state.last_decision.get("selected", [])
+                        if st.session_state.last_decision
+                        else []
+                    )
+                    rendered_reply = _render_citations(reply, selected_items)
+                    _render_with_mermaid(rendered_reply)
+                    new_msg_idx = len(st.session_state.messages)
+                    _render_quiz_for_message(new_msg_idx, topic_id, student_id)
+
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+                st.rerun()
+
+            _render_context_analysis()
+
+        with right_col:
+            _render_right_pane(right_col, topic_id, student_id)
 
 
 if __name__ == "__main__":

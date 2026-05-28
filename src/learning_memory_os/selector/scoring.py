@@ -55,8 +55,11 @@ def _recency(item: MemoryItem) -> float:
 
 
 def score_item(item: MemoryItem, ctx: ScoringContext) -> ItemScore:
-    relevance = _cosine(item.embedding, ctx.task_embedding) if item.embedding else 0.0
-    recency = _recency(item) if item.tier == "episodic" else 0.0
+    if item.tier == "xtrace":
+        relevance = float(item.metadata.get("xtrace_similarity", 0.0))
+    else:
+        relevance = _cosine(item.embedding, ctx.task_embedding) if item.embedding else 0.0
+    recency = _recency(item) if item.tier in ("episodic", "xtrace") else 0.0
     misconception = 1.0 if item.id in ctx.active_misconception_titles else 0.0
     prerequisite = 1.0 if item.title in ctx.prerequisite_titles else 0.0
     reuse = math.log1p(ctx.reuse_counts.get(item.id, 0))
