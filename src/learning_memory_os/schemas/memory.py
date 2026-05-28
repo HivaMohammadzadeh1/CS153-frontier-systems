@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from .artifacts import Artifact, ArtifactType, artifact_to_body
 
 
-Tier = Literal["semantic", "student", "episodic", "intervention"]
+Tier = Literal["semantic", "student", "episodic", "intervention", "xtrace"]
 
 
 class MemoryItem(BaseModel):
