@@ -187,7 +187,7 @@ New env vars in `.env.example` (and required for the Streamlit demo):
 ```
 XTRACE_API_KEY=
 XTRACE_ORG_ID=
-XTRACE_BASE_URL=https://api.mem.xtrace.ai
+XTRACE_BASE_URL=https://api.production.xtrace.ai
 ```
 
 If `XTRACE_API_KEY` is unset, the tutor logs a warning at startup and the
