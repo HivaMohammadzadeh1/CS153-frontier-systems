@@ -20,7 +20,7 @@ This spec adds that missing execution layer.
 - **No changes to `finetune.py` or `finetune_router.py`.** They already auto-detect CUDA and accept `--size` / `--trajectories` / `--out` / `--epochs`. The cluster layer only *invokes* them.
 - **No trajectory regeneration.** Train on the existing 5,000-trajectory `val.jsonl`. (The scripts stay parameterized on `--trajectories` so a larger regenerated set can be dropped in later with no script changes — the "if needed" path.)
 - **No corpus expansion** (CS336 Spring 2026 refresh, systems-book content). Deferred to a separate spec; the user will provide licensed book text later.
-- **No cluster-side evaluation / Pareto plot.** The eval half of Plan 3 (`router/infer.py`, `router/frontier_api.py`, `eval/router_eval.py`, `eval/pareto.py`, `scripts/eval_routers.py`, `scripts/plot_pareto.py`) **does not exist yet**. A cluster eval job has nothing to call. Eval-on-cluster is a documented follow-up (§8), blocked on implementing those modules first.
+- ~~No cluster-side evaluation / Pareto plot.~~ **Now implemented** (follow-up completed 2026-05-29): the eval half of Plan 3 (`router/infer.py`, `router/frontier_api.py`, `eval/router_eval.py`, `eval/pareto.py`, `scripts/eval_routers.py`, `scripts/plot_pareto.py`) and a `cluster/eval_routers.sbatch` GPU job now exist. See §8.
 
 ## 3. Constraints (from CLAUDE.md)
 
@@ -129,7 +129,7 @@ Total ≈ **3 GPU-hours**. The runbook checks remaining budget with `sshare -u $
 
 ## 8. Deferred follow-ups
 
-- **Cluster-side eval + Pareto plot.** Blocked on implementing Plan 3 Tasks 9–10 (`router/infer.py`, `router/frontier_api.py`, `eval/router_eval.py`, `eval/pareto.py`, `scripts/eval_routers.py`, `scripts/plot_pareto.py`). Once they exist, add `cluster/eval_routers.sbatch` (GPU job for adapter inference) and run the frontier-API baseline + Pareto plot on the login pod (CPU + network + `ANTHROPIC_API_KEY`, no GPU).
+- **Cluster-side eval + Pareto plot — DONE (2026-05-29).** Implemented Plan 3 Tasks 9–10: `eval/router_eval.py` (precision/recall/jaccard, unit-tested), `router/frontier_api.py` (unit-tested, mocked LLM), `router/infer.py` (GPU adapter inference, no unit test — needs weights+GPU, like `finetune.py`), `eval/pareto.py` + `scripts/plot_pareto.py` (headless Agg backend, unit-tested), `scripts/eval_routers.py` (with `--frontier/--no-frontier` and `--adapters/--no-adapters` so the GPU adapter pass and the login-pod frontier baseline run independently). Cluster job: `cluster/eval_routers.sbatch` (adapter inference, `--no-frontier`); the frontier baseline + merge + `plot_pareto` run on the login pod (CPU + network + `ANTHROPIC_API_KEY`). Runbook step 7 in `cluster/README.md`.
 - **Corpus expansion** (CS336 Spring 2026, systems books with user-provided licensed text) — separate spec.
 - **Train on a larger regenerated trajectory set** — drop a new JSONL in and re-run; scripts are already parameterized.
 

@@ -14,12 +14,14 @@ Design rationale: `docs/superpowers/specs/2026-05-29-slurm-finetuning-execution-
 | `stage.sh` | dev machine | git clone/pull the repo on the pod + `kubectl cp` the gitignored `val.jsonl` |
 | `finetune_router.sbatch` | cluster (sbatch) | one GPU job, fine-tunes one `SIZE_ID` in an NGC container |
 | `submit_sweep.sh` | login pod | submit all four sizes, dependency-chained on a single GPU |
+| `eval_routers.sbatch` | cluster (sbatch) | GPU job, scores every trained adapter on the held-out split |
 | `fetch_results.sh` | dev machine | `kubectl cp` the trained adapters back |
 
-Scope: **training only.** Cluster-side eval + the Pareto plot are deferred — the
-eval code (`router/infer.py`, `router/frontier_api.py`, `eval/router_eval.py`,
-`eval/pareto.py`, `scripts/eval_routers.py`, `scripts/plot_pareto.py`) does not exist
-yet (Plan 3 Tasks 9–10). See the spec §8.
+Scope: **training + evaluation.** Training produces the adapters; evaluation scores
+them and plots the accuracy-vs-cost frontier. The eval splits across two machines: the
+GPU adapter inference runs as a cluster job (`eval_routers.sbatch`, `--no-frontier`),
+while the frontier-API baseline (`--no-adapters`) runs on the login pod because it
+needs network + `ANTHROPIC_API_KEY` and compute nodes are not assumed to have egress.
 
 Trains on the existing `data/trajectories/val.jsonl` (5,000 trajectories). To train on
 a larger regenerated set later, pass `TRAJ=/path/to/other.jsonl` — no script changes.
@@ -108,6 +110,46 @@ ls data/router_checkpoints/*/adapter/adapter_config.json
 ```
 
 Each line is one successful fine-tune.
+
+### 7. Evaluate the adapters + plot the frontier
+
+Two parts, because the GPU compute nodes aren't assumed to reach the Anthropic API.
+
+**(a) Adapter inference — GPU job (login pod):**
+
+```bash
+cd /home/$CLUSTER_USER/CS153-frontier-systems
+sbatch cluster/eval_routers.sbatch        # writes data/eval/router_results.adapters.json
+squeue -u $USER
+```
+
+**(b) Frontier-API baseline — login pod (no GPU, needs the key):**
+
+```bash
+export ANTHROPIC_API_KEY=<your key>
+PYTHONPATH=src python -m scripts.eval_routers \
+  --no-adapters --limit 500 \
+  --out data/eval/router_results.frontier.json
+```
+
+**(c) Merge the two result sets and plot:**
+
+```bash
+PYTHONPATH=src python - <<'PY'
+import json, pathlib
+rows = []
+for f in ["data/eval/router_results.adapters.json", "data/eval/router_results.frontier.json"]:
+    p = pathlib.Path(f)
+    if p.exists():
+        rows += json.loads(p.read_text())
+pathlib.Path("data/eval/router_results.json").write_text(json.dumps(rows, indent=2))
+print(f"merged {len(rows)} rows")
+PY
+PYTHONPATH=src python -m scripts.plot_pareto   # writes data/eval/pareto.png
+```
+
+Then `bash cluster/fetch_results.sh` already brings back `data/router_checkpoints`;
+to also pull the plot: `kubectl cp slurm/$POD:/home/$CLUSTER_USER/CS153-frontier-systems/data/eval data/eval -c login`.
 
 ## Notes
 
