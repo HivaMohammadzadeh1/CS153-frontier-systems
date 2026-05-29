@@ -6,7 +6,7 @@
 
 // ── State ──────────────────────────────────────────────────────
 const state = {
-  studentId: "demo-user",
+  studentId: "Hiva",
   budget: 3000,
   topicId: null,
   messages: [],
@@ -737,7 +737,7 @@ async function sendMessage(text) {
   showView("chat");
   $("welcome").classList.add("hidden");
 
-  state.studentId = $("studentIdInput").value.trim() || "demo-user";
+  state.studentId = $("studentIdInput").value.trim() || "Hiva";
   state.topicId = $("topicSelect").value || null;
 
   state.messages.push({ role: "user", content: text });
