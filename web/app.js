@@ -1,5 +1,5 @@
 /**
- * Foundry — ML Systems Tutor
+ * Memex — ML Systems Tutor
  * Dashboard-home + chat single-page app. A tiny hash router switches between
  * Home / Chat / Progress / Path views; all chat logic is preserved.
  */
@@ -17,7 +17,14 @@ const state = {
 };
 
 const TOPIC_MAP = {};   // id -> { title, area }
+const AREA_NAMES = {};  // area letter -> human-readable name
 let _progressCache = null;
+
+function areaName(letter) {
+  const n = AREA_NAMES[letter];
+  if (n) return n.replace(/\s*\(.*?\)\s*$/, "").trim();   // drop course-code suffix
+  return letter && letter !== "?" ? `Area ${letter}` : "Other topics";
+}
 
 // ── Helpers ────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
@@ -55,7 +62,7 @@ function toast(html) {
 // ── Theme ──────────────────────────────────────────────────────
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
-  try { localStorage.setItem("foundry.theme", theme); } catch (_) {}
+  try { localStorage.setItem("memex.theme", theme); } catch (_) {}
   const icon = $("themeIcon");
   if (icon) icon.textContent = theme === "dark" ? "☀️" : "🌙";
 }
@@ -71,19 +78,19 @@ function _today() { return new Date().toISOString().slice(0, 10); }
 function _yesterday() { return new Date(Date.now() - 86400000).toISOString().slice(0, 10); }
 
 function currentStreak() {
-  const last = localStorage.getItem("foundry.streak.last");
-  const count = parseInt(localStorage.getItem("foundry.streak.count") || "0", 10);
+  const last = localStorage.getItem("memex.streak.last");
+  const count = parseInt(localStorage.getItem("memex.streak.count") || "0", 10);
   if (!last) return 0;
   return (last === _today() || last === _yesterday()) ? count : 0;
 }
 function bumpStreak() {
-  const last = localStorage.getItem("foundry.streak.last");
-  let count = parseInt(localStorage.getItem("foundry.streak.count") || "0", 10);
+  const last = localStorage.getItem("memex.streak.last");
+  let count = parseInt(localStorage.getItem("memex.streak.count") || "0", 10);
   const today = _today();
   if (last === today) return count;
   count = (last === _yesterday()) ? count + 1 : 1;
-  localStorage.setItem("foundry.streak.last", today);
-  localStorage.setItem("foundry.streak.count", String(count));
+  localStorage.setItem("memex.streak.last", today);
+  localStorage.setItem("memex.streak.count", String(count));
   renderStreak();
   toast(`🔥 <span class="t-grad">${count}-day streak!</span>`);
   return count;
@@ -153,21 +160,13 @@ async function loadTopics() {
     const topics = await r.json();
     const sel = $("topicSelect");
     topics.forEach((t) => {
-      TOPIC_MAP[t.id] = { title: t.title, area: t.area || "?" };
+      const area = t.area || "?";
+      TOPIC_MAP[t.id] = { title: t.title, area };
+      if (t.area_title) AREA_NAMES[area] = t.area_title;
       const o = document.createElement("option");
       o.value = t.id; o.textContent = t.title;
       sel.appendChild(o);
     });
-  } catch (_) {}
-}
-
-async function loadInfo() {
-  try {
-    const r = await fetch("/api/info");
-    if (!r.ok) return;
-    const d = await r.json();
-    if (d.tutor_model) { $("modelChip").textContent = d.tutor_model; $("metaModel").textContent = d.tutor_model; }
-    if (d.embedding_model) $("metaEmbed").textContent = d.embedding_model;
   } catch (_) {}
 }
 
@@ -230,15 +229,26 @@ function topicTitle(id) { return TOPIC_MAP[id]?.title || id; }
 // ── Home view ──────────────────────────────────────────────────
 async function renderHome() {
   const el = $("view-home");
-  const data = await loadProgress(true);
+  const [data, act] = await Promise.all([loadProgress(true), loadActivity(true)]);
   const s = deriveSummary(data);
+  const ast = (act && act.stats) || {};
   const streak = currentStreak();
   const overallPct = Math.round(s.overall * 100);
+
+  const homeStats = [
+    { num: ast.questions ?? 0, lbl: "Questions" },
+    { num: ast.quizzes ?? 0, lbl: "Quizzes" },
+    { num: ast.topics_touched ?? 0, lbl: "Topics" },
+    { num: ast.concepts_mastered ?? 0, lbl: "Mastered" },
+  ];
+  const homeStatsHtml = `<div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">${
+    homeStats.map((x) => `<div class="stat"><div class="stat-num" data-count="${x.num}">0</div><div class="stat-lbl">${x.lbl}</div></div>`).join("")
+  }</div>`;
 
   const areasHtml = s.areas.length
     ? s.areas.map((a) => `
       <div class="bar-row">
-        <span class="lbl">Area ${esc(a.area)}</span>
+        <span class="lbl">${esc(areaName(a.area))}</span>
         <span class="pct">${Math.round(a.mastery * 100)}%</span>
         <div class="bar ${masteryColor(a.mastery)}"><i data-w="${Math.round(a.mastery * 100)}"></i></div>
       </div>`).join("")
@@ -283,7 +293,7 @@ async function renderHome() {
 
   const greeting = streak > 0
     ? `Welcome back — you're on a <b>${streak}-day</b> streak.`
-    : `Welcome to Foundry.`;
+    : `Welcome to Memex.`;
 
   el.innerHTML = `
     <div class="view-inner">
@@ -292,6 +302,8 @@ async function renderHome() {
         <h1 class="view-title">Hey ${esc(state.studentId)} 👋</h1>
         <p class="view-subtitle">${greeting}</p>
       </div>
+
+      ${homeStatsHtml}
 
       <div class="grid-cards grid-2">
         <div class="card">
@@ -327,6 +339,7 @@ async function renderHome() {
     const ring = $("homeRing");
     if (ring) ring.style.setProperty("--val", overallPct);
     countUp($("homeRingVal"), overallPct);
+    el.querySelectorAll(".stat-num[data-count]").forEach((n) => countUp(n, parseInt(n.dataset.count, 10)));
     el.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
   });
 
@@ -478,7 +491,7 @@ async function renderProgress() {
     return `
       <div class="card" style="padding:16px 18px">
         <div class="bar-row" style="margin:0 0 6px">
-          <span class="lbl">${esc(topicTitle(t.topic_id))} <span class="chip chip-area" style="margin-left:6px">Area ${esc(TOPIC_MAP[t.topic_id]?.area || "?")}</span></span>
+          <span class="lbl">${esc(topicTitle(t.topic_id))} <span class="chip chip-area" style="margin-left:6px">${esc(areaName(TOPIC_MAP[t.topic_id]?.area))}</span></span>
           <span class="pct">${pct}%</span>
           <div class="bar ${masteryColor(t.avg_mastery)}"><i data-w="${pct}"></i></div>
         </div>
@@ -544,7 +557,7 @@ async function renderPath() {
     }).join("");
     return `
       <div class="path-area">
-        <div class="path-area-h"><span class="chip chip-area">Area ${esc(area)}</span><h3>${byArea[area].length} topics</h3></div>
+        <div class="path-area-h"><span class="chip chip-area">${esc(area === "?" ? "Other" : "Area " + area)}</span><h3>${esc(areaName(area))} · ${byArea[area].length}</h3></div>
         <div class="path-grid">${nodes}</div>
       </div>`;
   }).join("");
@@ -673,8 +686,12 @@ function appendAssistantMessage(msg, msgIdx) {
 
   let refsHtml = "";
   if (msg.references && msg.references.length) {
-    const items = msg.references.map((r) => `<div class="ref-line"><b>[${r.n}]</b> ${esc(r.title)}</div>`).join("");
-    refsHtml = `<details class="refs" style="margin-top:12px"><summary>Sources ▾</summary><div style="margin-top:4px;display:flex;flex-direction:column;gap:2px;padding-left:4px">${items}</div></details>`;
+    const items = msg.references.map((r) =>
+      `<div class="ref-line"><b>[${r.n}]</b> ${esc(r.title)}</div>`).join("");
+    refsHtml = `<details class="refs" style="margin-top:12px"><summary>📚 ${msg.references.length} source${msg.references.length > 1 ? "s" : ""} ▾</summary>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;padding-left:4px">${items}
+        <button class="ref-ctx link-btn" style="margin-top:6px;text-align:left">See why these were chosen →</button>
+      </div></details>`;
   }
 
   row.innerHTML = `
@@ -693,6 +710,7 @@ function appendAssistantMessage(msg, msgIdx) {
 
   row.querySelector(".btn-test").addEventListener("click", () => triggerQuiz(row, msgIdx));
   row.querySelector(".btn-ctx").addEventListener("click", () => openRoutingModal(msg));
+  row.querySelector(".ref-ctx")?.addEventListener("click", () => openRoutingModal(msg));
   row.querySelector(".btn-regen").addEventListener("click", () => regenerate(msgIdx));
   row.querySelector(".btn-copy").addEventListener("click", () => copyReply(msg.content));
 
@@ -719,9 +737,8 @@ async function sendMessage(text) {
   showView("chat");
   $("welcome").classList.add("hidden");
 
-  state.studentId = $("studentIdInput").value.trim() || "you";
+  state.studentId = $("studentIdInput").value.trim() || "demo-user";
   state.topicId = $("topicSelect").value || null;
-  state.budget = parseInt($("budgetSlider").value, 10) || 3000;
 
   state.messages.push({ role: "user", content: text });
   appendUserBubble(text);
@@ -787,15 +804,8 @@ async function copyReply(text) {
 function openRoutingModal(msg) {
   const body = $("routingBody");
   const sel = msg.selected || [], dropped = msg.dropped || [];
-  const tokensUsed = msg.tokens_used ?? 0, budget = state.budget;
-  const pct = Math.min(100, Math.round((tokensUsed / budget) * 100));
 
-  let html = `<div style="margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:5px">
-      <span>Token budget</span><span>${tokensUsed} / ${budget}</span>
-    </div>
-    <div class="bar"><i style="width:${pct}%"></i></div>
-  </div>`;
+  let html = `<p class="view-subtitle" style="margin:0 0 14px">The tutor picked these memory items to answer you, scored by relevance, recency, your misconceptions, prerequisites, and reuse.</p>`;
 
   if (sel.length) {
     html += `<p class="tile-kicker" style="margin-bottom:8px">Selected (${sel.length})</p>`;
@@ -964,7 +974,6 @@ $("sendBtn").addEventListener("click", () => sendMessage());
 $("newChatBtn").addEventListener("click", () => { startNewChatLocal(); $("historyMenu").removeAttribute("open"); showView("chat"); });
 $("newChatTopBtn").addEventListener("click", () => { startNewChatLocal(); showView("chat"); });
 
-$("budgetSlider").addEventListener("input", (e) => { state.budget = parseInt(e.target.value, 10); $("budgetVal").textContent = state.budget; });
 $("studentIdInput").addEventListener("change", (e) => {
   state.studentId = e.target.value.trim() || "you";
   state.reuseCounts = {}; state.messages = []; state.conversationId = null;
@@ -988,7 +997,6 @@ window.addEventListener("hashchange", routeFromHash);
   applyTheme(document.documentElement.getAttribute("data-theme") || "light");
   renderStreak();
   buildStarterGrid();
-  await loadInfo();
   await loadTopics();
   await loadConversations();
   await maybeShowWelcomeBack();

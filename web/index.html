@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Foundry — ML Systems Tutor</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>" />
+  <title>Memex — ML Systems Tutor</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     // Apply saved theme before first paint to avoid a flash.
     (function () {
       try {
-        var t = localStorage.getItem('foundry.theme');
+        var t = localStorage.getItem('memex.theme');
         if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
       } catch (e) {}
     })();
@@ -30,7 +30,7 @@
   <nav id="rail" class="rail">
     <div class="rail-brand">
       <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-word">Foundry</span>
+      <span class="brand-word">Memex</span>
     </div>
 
     <div class="rail-nav">
@@ -51,12 +51,6 @@
         <div class="rail-popover">
           <label class="field-label">Student ID</label>
           <input id="studentIdInput" type="text" value="demo-user" class="field-input" />
-          <label class="field-label mt-3">Token budget: <span id="budgetVal">3000</span></label>
-          <input id="budgetSlider" type="range" min="1000" max="32000" step="500" value="3000" class="field-range" />
-          <div class="popover-meta">
-            <div>Model: <span id="metaModel">Claude Opus 4.7</span></div>
-            <div>Embeddings: <span id="metaEmbed">text-embedding-3-small</span></div>
-          </div>
         </div>
       </details>
     </div>
@@ -84,7 +78,6 @@
         <select id="topicSelect" class="topic-select" title="Focus a topic">
           <option value="">All topics</option>
         </select>
-        <span class="model-chip" id="modelChip">Claude Opus 4.7</span>
         <div class="topbar-spacer"></div>
         <button id="newChatTopBtn" class="topbar-btn" title="New chat">＋ New</button>
       </header>
@@ -110,7 +103,7 @@
 
       <div class="composer-wrap">
         <div class="composer">
-          <textarea id="msgInput" rows="1" placeholder="Message Foundry…" class="composer-input"></textarea>
+          <textarea id="msgInput" rows="1" placeholder="Message Memex…" class="composer-input"></textarea>
           <button id="sendBtn" disabled class="composer-send" title="Send">↑</button>
         </div>
         <div class="composer-hint">Enter to send · Shift+Enter for newline</div>

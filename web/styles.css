@@ -1,5 +1,5 @@
 /* ============================================================================
-   Foundry — design tokens + components.
+   Memex — design tokens + components.
    All color/spacing flows through CSS variables so light & dark are first-class.
    ========================================================================== */
 
@@ -94,7 +94,7 @@ body {
   position: relative; flex-shrink: 0;
 }
 .brand-mark::after {
-  content: "🔥"; position: absolute; inset: 0;
+  content: "🧠"; position: absolute; inset: 0;
   display: grid; place-items: center; font-size: 14px;
   filter: grayscale(1) brightness(3);
 }

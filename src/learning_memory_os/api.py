@@ -84,6 +84,11 @@ def _llm_and_embedder():
 
 _TOPICS = load_topics(_PROJECT_ROOT / "config" / "topics.yaml")
 
+import yaml as _yaml
+_AREA_NAMES: dict[str, str] = (
+    _yaml.safe_load((_PROJECT_ROOT / "config" / "topics.yaml").read_text()) or {}
+).get("areas", {})
+
 
 # ---- Request/response models ----
 
@@ -132,7 +137,11 @@ def health():
 
 @app.get("/api/topics")
 def list_topics():
-    return [{"id": t.id, "title": t.title, "area": t.area} for t in _TOPICS]
+    return [
+        {"id": t.id, "title": t.title, "area": t.area,
+         "area_title": _AREA_NAMES.get(t.area, "")}
+        for t in _TOPICS
+    ]
 
 
 class StoredMessage(BaseModel):
@@ -209,27 +218,37 @@ def student_state(student_id: str):
         conn.close()
 
 
-def _substitute_citations(reply_text: str, decision_selected) -> tuple[str, list[ChatReference]]:
+def _substitute_citations(reply_text: str, id_to_title: dict[str, str]) -> tuple[str, list[ChatReference]]:
     """Find [a1b2c3d4] short ids in reply_text, replace with [1] [2] [3] in order.
-    Return the rewritten text + ordered references list."""
+
+    Only ids that resolve to a real title (via ``id_to_title``) are numbered and
+    surfaced as references; markers that can't be resolved (e.g. a hallucinated
+    id) are stripped so the student never sees a raw hex id as a "source".
+    """
     pattern = re.compile(r"\[([a-f0-9]{8})\]")
+
     ids_in_order: list[str] = []
     seen: set[str] = set()
     for match in pattern.finditer(reply_text):
         cid = match.group(1)
-        if cid not in seen:
-            seen.add(cid)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        if cid in id_to_title:           # only number resolvable sources
             ids_in_order.append(cid)
-    # Map id -> number
-    id_to_n = {cid: i + 1 for i, cid in enumerate(ids_in_order)}
-    new_text = pattern.sub(lambda m: f"[{id_to_n[m.group(1)]}]", reply_text)
 
-    # Build references list using titles from selected items
-    sel_by_id = {it.id: it for it in decision_selected}
-    refs: list[ChatReference] = []
-    for cid in ids_in_order:
-        title = sel_by_id[cid].title if cid in sel_by_id else cid
-        refs.append(ChatReference(n=id_to_n[cid], id=cid, title=title))
+    id_to_n = {cid: i + 1 for i, cid in enumerate(ids_in_order)}
+
+    def _repl(m: re.Match) -> str:
+        cid = m.group(1)
+        return f"[{id_to_n[cid]}]" if cid in id_to_n else ""
+
+    new_text = pattern.sub(_repl, reply_text)
+    # Tidy up any spacing left by a stripped marker (e.g. "foo  ." -> "foo.")
+    new_text = re.sub(r"[ \t]{2,}", " ", new_text)
+    new_text = re.sub(r"\s+([.,;:])", r"\1", new_text)
+
+    refs = [ChatReference(n=id_to_n[cid], id=cid, title=id_to_title[cid]) for cid in ids_in_order]
     return new_text, refs
 
 
@@ -381,7 +400,15 @@ def chat(req: ChatRequest):
 
         conn.commit()
 
-        new_text, refs = _substitute_citations(response.text, decision.selected)
+        # Resolve citations against everything the tutor could have cited: the
+        # full candidate pool plus the items it actually saw. Items carry full
+        # UUIDs but the model cites the 8-char prefix (e.g. [ad12ce93]), so key
+        # the lookup by both the full id and its prefix.
+        id_to_title: dict[str, str] = {}
+        for it in [*candidates, *response.selected_items, *decision.selected]:
+            id_to_title.setdefault(it.id, it.title)
+            id_to_title.setdefault(it.id[:8], it.title)
+        new_text, refs = _substitute_citations(response.text, id_to_title)
 
         def _item(it, scores):
             sc = scores.get(it.id)
