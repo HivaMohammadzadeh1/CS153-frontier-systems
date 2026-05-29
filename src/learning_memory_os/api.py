@@ -672,6 +672,130 @@ def student_progress(student_id: str):
         conn.close()
 
 
+@app.get("/api/student/{student_id}/activity")
+def student_activity(student_id: str):
+    """Aggregate everything a student has done: lifetime stats, quiz-score
+    history, and a recent activity timeline — all from episodic_events + mastery."""
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(student_id)
+
+        mastery = student.mastery_for(student_id)
+        concepts_assessed = len(mastery)
+        concepts_mastered = sum(1 for m in mastery if m.score >= 0.7)
+        misconceptions = student.active_misconceptions(student_id)
+
+        with conn.cursor() as cur:
+            # Event-type counts
+            cur.execute(
+                "SELECT event_type, count(*) AS n FROM episodic_events "
+                "WHERE student_id = %s GROUP BY event_type",
+                (student_id,),
+            )
+            counts = {r["event_type"]: r["n"] for r in cur.fetchall()}
+
+            # Quiz score history (chronological)
+            cur.execute(
+                "SELECT (payload->>'topic_id') AS topic_id, "
+                "       (payload->>'score')::float AS score, occurred_at "
+                "FROM episodic_events "
+                "WHERE student_id = %s AND event_type = 'quiz_attempt' "
+                "  AND payload ? 'score' "
+                "ORDER BY occurred_at ASC",
+                (student_id,),
+            )
+            quiz_rows = cur.fetchall()
+
+            # Recent timeline (questions, quizzes, feedback)
+            cur.execute(
+                "SELECT event_type, payload, occurred_at FROM episodic_events "
+                "WHERE student_id = %s AND event_type IN ('question','quiz_attempt','feedback') "
+                "ORDER BY occurred_at DESC LIMIT 40",
+                (student_id,),
+            )
+            tl_rows = cur.fetchall()
+
+            # Active span + distinct active days
+            cur.execute(
+                "SELECT min(occurred_at) AS first, max(occurred_at) AS last, "
+                "       count(DISTINCT occurred_at::date) AS days "
+                "FROM episodic_events WHERE student_id = %s",
+                (student_id,),
+            )
+            span = cur.fetchone() or {}
+
+            # Topics touched (distinct topic_id over assessed concepts)
+            topics_touched = 0
+            ids = [m.concept_id for m in mastery]
+            if ids:
+                cur.execute(
+                    "SELECT count(DISTINCT topic_id) AS n FROM semantic_items WHERE id::text = ANY(%s)",
+                    (ids,),
+                )
+                topics_touched = cur.fetchone()["n"]
+
+            # Conversation count
+            cur.execute(
+                "SELECT count(*) AS n FROM conversations WHERE student_id = %s",
+                (student_id,),
+            )
+            conv_count = cur.fetchone()["n"]
+
+        quiz_scores = [q["score"] for q in quiz_rows if q["score"] is not None]
+        avg_quiz = round(sum(quiz_scores) / len(quiz_scores), 3) if quiz_scores else None
+
+        def _label(row):
+            p = row["payload"] or {}
+            if row["event_type"] == "question":
+                return (p.get("text") or p.get("question") or p.get("task") or "Asked a question")[:120]
+            if row["event_type"] == "quiz_attempt":
+                t = p.get("topic_id") or ""
+                return f"Quiz · {t}" if t else "Took a quiz"
+            if row["event_type"] == "feedback":
+                return "Rated a tutor response"
+            return row["event_type"]
+
+        timeline = [
+            {
+                "type": r["event_type"],
+                "label": _label(r),
+                "topic_id": (r["payload"] or {}).get("topic_id"),
+                "score": (r["payload"] or {}).get("score"),
+                "occurred_at": r["occurred_at"].isoformat() if r["occurred_at"] else None,
+            }
+            for r in tl_rows
+        ]
+
+        return {
+            "stats": {
+                "questions": counts.get("question", 0),
+                "quizzes": counts.get("quiz_attempt", 0),
+                "feedback": counts.get("feedback", 0),
+                "avg_quiz_score": avg_quiz,
+                "concepts_assessed": concepts_assessed,
+                "concepts_mastered": concepts_mastered,
+                "topics_touched": topics_touched,
+                "misconceptions": len(misconceptions),
+                "conversations": conv_count,
+                "active_days": span.get("days", 0) or 0,
+                "first_active": span["first"].isoformat() if span.get("first") else None,
+                "last_active": span["last"].isoformat() if span.get("last") else None,
+            },
+            "quiz_history": [
+                {
+                    "topic_id": q["topic_id"],
+                    "score": q["score"],
+                    "occurred_at": q["occurred_at"].isoformat() if q["occurred_at"] else None,
+                }
+                for q in quiz_rows
+            ],
+            "timeline": timeline,
+        }
+    finally:
+        conn.close()
+
+
 # ── Conversation endpoints ────────────────────────────────────────────────────
 
 class ConversationSummary(BaseModel):

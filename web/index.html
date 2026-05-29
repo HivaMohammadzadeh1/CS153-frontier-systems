@@ -35,6 +35,7 @@
 
     <div class="rail-nav">
       <button class="nav-item" data-view="home"     title="Home">     <span class="nav-ico">🏠</span><span class="nav-label">Home</span></button>
+      <button class="nav-item" data-view="profile"  title="Profile">  <span class="nav-ico">👤</span><span class="nav-label">Profile</span></button>
       <button class="nav-item" data-view="chat"     title="Chat">     <span class="nav-ico">💬</span><span class="nav-label">Chat</span></button>
       <button class="nav-item" data-view="progress" title="Progress"> <span class="nav-ico">📊</span><span class="nav-label">Progress</span></button>
       <button class="nav-item" data-view="path"     title="Path">     <span class="nav-ico">🎯</span><span class="nav-label">Path</span></button>
@@ -49,7 +50,7 @@
         <summary class="rail-btn" title="Settings">⚙️</summary>
         <div class="rail-popover">
           <label class="field-label">Student ID</label>
-          <input id="studentIdInput" type="text" value="you" class="field-input" />
+          <input id="studentIdInput" type="text" value="demo-user" class="field-input" />
           <label class="field-label mt-3">Token budget: <span id="budgetVal">3000</span></label>
           <input id="budgetSlider" type="range" min="1000" max="32000" step="500" value="3000" class="field-range" />
           <div class="popover-meta">
@@ -66,6 +67,9 @@
 
     <!-- HOME / TODAY ------------------------------------------------- -->
     <section id="view-home" class="view" data-view="home"></section>
+
+    <!-- PROFILE ------------------------------------------------------ -->
+    <section id="view-profile" class="view" data-view="profile"></section>
 
     <!-- CHAT --------------------------------------------------------- -->
     <section id="view-chat" class="view view-chat" data-view="chat">

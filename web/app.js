@@ -6,7 +6,7 @@
 
 // ── State ──────────────────────────────────────────────────────
 const state = {
-  studentId: "you",
+  studentId: "demo-user",
   budget: 3000,
   topicId: null,
   messages: [],
@@ -123,7 +123,7 @@ function substituteCitations(text, references) {
 }
 
 // ── Router / views ─────────────────────────────────────────────
-const VIEWS = ["home", "chat", "progress", "path"];
+const VIEWS = ["home", "profile", "chat", "progress", "path"];
 
 function showView(name, pushHash = true) {
   if (!VIEWS.includes(name)) name = "home";
@@ -134,6 +134,7 @@ function showView(name, pushHash = true) {
   });
   if (pushHash) location.hash = `#/${name}`;
   if (name === "home") renderHome();
+  else if (name === "profile") renderProfile();
   else if (name === "progress") renderProgress();
   else if (name === "path") renderPath();
   else if (name === "chat") $("msgInput")?.focus();
@@ -178,6 +179,17 @@ async function loadProgress(force = false) {
     _progressCache = await r.json();
     return _progressCache;
   } catch (_) { return _progressCache; }
+}
+
+let _activityCache = null;
+async function loadActivity(force = false) {
+  if (!force && _activityCache) return _activityCache;
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/activity`);
+    if (!r.ok) return _activityCache;
+    _activityCache = await r.json();
+    return _activityCache;
+  } catch (_) { return _activityCache; }
 }
 
 // Derived rollups from progress + topic catalog.
@@ -341,6 +353,105 @@ function seedChat(topicId) {
     $("msgInput").value = `Help me learn ${topicTitle(topicId)}.`;
     $("msgInput").dispatchEvent(new Event("input"));
   }
+}
+
+// ── Profile view ───────────────────────────────────────────────
+function fmtDate(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
+  catch (_) { return "—"; }
+}
+
+async function renderProfile() {
+  const el = $("view-profile");
+  const [act, prog] = await Promise.all([loadActivity(true), loadProgress(true)]);
+  const st = (act && act.stats) || {};
+  const initial = (state.studentId || "?").trim().charAt(0).toUpperCase() || "?";
+  const streak = currentStreak();
+  const avgQuiz = st.avg_quiz_score == null ? "—" : Math.round(st.avg_quiz_score * 100) + "%";
+
+  const stats = [
+    { num: st.questions ?? 0, lbl: "Questions asked", grad: true },
+    { num: st.quizzes ?? 0, lbl: "Quizzes taken" },
+    { num: avgQuiz, lbl: "Avg quiz score" },
+    { num: `${st.concepts_mastered ?? 0}/${st.concepts_assessed ?? 0}`, lbl: "Concepts mastered" },
+    { num: st.topics_touched ?? 0, lbl: "Topics explored" },
+    { num: streak, lbl: "Day streak" },
+  ];
+  const statHtml = stats.map((s) => {
+    const isNum = typeof s.num === "number";
+    return `<div class="stat"><div class="stat-num ${s.grad ? "grad" : ""}" ${isNum ? `data-count="${s.num}"` : ""}>${isNum ? 0 : s.num}</div><div class="stat-lbl">${s.lbl}</div></div>`;
+  }).join("");
+
+  // Quiz-score trend
+  const qh = (act && act.quiz_history) || [];
+  let sparkHtml = "";
+  if (qh.length) {
+    sparkHtml = `<div class="section-label">Quiz-score history</div><div class="card"><div class="spark">${
+      qh.slice(-12).map((q) => {
+        const pct = Math.round((q.score || 0) * 100);
+        const cls = q.score >= 0.7 ? "good" : q.score >= 0.4 ? "warn" : "bad";
+        const t = topicTitle(q.topic_id || "");
+        return `<div class="spark-col"><span class="spark-cap">${pct}%</span><div class="spark-bar ${cls}" data-h="${Math.max(3, pct)}"></div><span class="spark-x" title="${esc(t)}">${esc((t.split(" ")[0]) || "")}</span></div>`;
+      }).join("")
+    }</div></div>`;
+  }
+
+  // Strengths / needs-work from mastery
+  const topics = (prog && prog.topics) || [];
+  const sorted = topics.slice().sort((a, b) => b.avg_mastery - a.avg_mastery);
+  const strong = sorted.slice(0, 3);
+  const weak = sorted.slice().reverse().slice(0, 3);
+  const misc = (prog && prog.misconceptions) || [];
+  const barRow = (t, forceGood) =>
+    `<div class="bar-row"><span class="lbl">${esc(topicTitle(t.topic_id))}</span><span class="pct">${Math.round(t.avg_mastery * 100)}%</span><div class="bar ${forceGood ? "good" : masteryColor(t.avg_mastery)}"><i data-w="${Math.round(t.avg_mastery * 100)}"></i></div></div>`;
+  const strengthHtml = strong.length ? strong.map((t) => barRow(t, true)).join("") : `<p class="view-subtitle">No data yet.</p>`;
+  const weakHtml = weak.length ? weak.map((t) => barRow(t, false)).join("") : "";
+  const miscHtml = misc.length ? `<div style="margin-top:10px">${misc.slice(0, 3).map((m) => `<div style="display:flex;gap:8px;font-size:12.5px;color:var(--text-muted);margin:6px 0"><span style="color:var(--warn)">⚠</span><span>${esc(m.description)}</span></div>`).join("")}</div>` : "";
+
+  // Activity timeline
+  const tl = (act && act.timeline) || [];
+  const tlIco = { question: ["q", "💬"], quiz_attempt: ["quiz", "🎯"], feedback: ["fb", "👍"] };
+  const tlHtml = tl.length ? tl.slice(0, 25).map((e) => {
+    const [cls, ico] = tlIco[e.type] || ["", "•"];
+    const score = (e.type === "quiz_attempt" && e.score != null)
+      ? `<span class="tl-score" style="color:${e.score >= 0.7 ? "var(--good)" : e.score >= 0.4 ? "var(--warn)" : "var(--bad)"}">${Math.round(e.score * 100)}%</span>` : "";
+    const topic = e.topic_id ? topicTitle(e.topic_id) : "";
+    return `<div class="tl-item"><div class="tl-ico ${cls}">${ico}</div><div class="tl-body"><div class="tl-label">${esc(e.label)}</div><div class="tl-meta">${topic ? esc(topic) + " · " : ""}${formatRelative(e.occurred_at)}</div></div>${score}</div>`;
+  }).join("") : `<p class="view-subtitle">No activity recorded yet.</p>`;
+
+  el.innerHTML = `
+    <div class="view-inner">
+      <div class="card profile-hero" style="margin-bottom:20px">
+        <div class="avatar">${esc(initial)}</div>
+        <div>
+          <h1 class="view-title" style="font-size:24px">${esc(state.studentId)}</h1>
+          <div class="profile-meta">
+            <span>🔥 <b>${streak}</b>-day streak</span>
+            <span>📅 Learning since <b>${fmtDate(st.first_active)}</b></span>
+            <span>⏱️ <b>${st.active_days ?? 0}</b> active days</span>
+            <span>Last active <b>${formatRelative(st.last_active)}</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-grid">${statHtml}</div>
+      ${sparkHtml}
+
+      <div class="grid-cards grid-2" style="margin-top:8px">
+        <div class="card"><div class="tile-kicker" style="margin-bottom:10px">💪 Strengths</div>${strengthHtml}</div>
+        <div class="card"><div class="tile-kicker" style="margin-bottom:10px">🎯 Needs work</div>${weakHtml}${miscHtml}</div>
+      </div>
+
+      <div class="section-label">Recent activity</div>
+      <div class="card"><div class="timeline">${tlHtml}</div></div>
+    </div>`;
+
+  requestAnimationFrame(() => {
+    el.querySelectorAll(".stat-num[data-count]").forEach((n) => countUp(n, parseInt(n.dataset.count, 10)));
+    el.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+    el.querySelectorAll(".spark-bar[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
+  });
 }
 
 // ── Progress view ──────────────────────────────────────────────
@@ -642,6 +753,7 @@ async function sendMessage(text) {
     bumpStreak();
     loadConversations();
     loadProgress(true);
+    loadActivity(true);
   } catch (err) {
     thinking.remove();
     appendError(err.message);
@@ -856,7 +968,7 @@ $("budgetSlider").addEventListener("input", (e) => { state.budget = parseInt(e.t
 $("studentIdInput").addEventListener("change", (e) => {
   state.studentId = e.target.value.trim() || "you";
   state.reuseCounts = {}; state.messages = []; state.conversationId = null;
-  _progressCache = null;
+  _progressCache = null; _activityCache = null;
   $("chat").innerHTML = ""; $("welcome").classList.remove("hidden");
   loadConversations();
   if (state.view !== "chat") showView(state.view, false);
