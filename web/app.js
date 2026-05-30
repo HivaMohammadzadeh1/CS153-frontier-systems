@@ -841,17 +841,25 @@ async function triggerQuiz(row, msgIdx) {
   const area = row.querySelector(".quiz-area");
   area.innerHTML = `<div class="quiz-card"><div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)"><div class="thinking-dots"><span></span><span></span><span></span></div> Generating question…</div></div>`;
   try {
-    const res = await fetch("/api/quiz/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic_id: topicId }) });
+    const res = await fetch("/api/quiz/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic_id: topicId, student_id: state.studentId }) });
     if (!res.ok) throw new Error(await res.text());
-    const { question, rubric } = await res.json();
-    renderQuizQuestion(area, msgIdx, question, rubric, topicId);
+    const { question, rubric, difficulty } = await res.json();
+    renderQuizQuestion(area, msgIdx, question, rubric, topicId, difficulty);
   } catch (err) { area.innerHTML = `<p style="font-size:12px;color:var(--bad);margin-top:4px">Quiz error: ${esc(err.message)}</p>`; }
 }
-function renderQuizQuestion(area, msgIdx, question, rubric, topicId) {
+const DIFF_STYLE = {
+  Easy: "background:var(--ember-soft);color:var(--good)",
+  Medium: "background:var(--accent-soft);color:var(--accent)",
+  Hard: "background:var(--ember-soft);color:var(--ember)",
+  Expert: "background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)",
+};
+function renderQuizQuestion(area, msgIdx, question, rubric, topicId, difficulty) {
   const card = document.createElement("div");
   card.className = "quiz-card";
+  const diffBadge = difficulty
+    ? `<span class="chip" style="${DIFF_STYLE[difficulty] || DIFF_STYLE.Easy}">${esc(difficulty)}</span>` : "";
   card.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-    <span style="font-size:14px;font-weight:600">🎯 Quick check</span>
+    <span style="font-size:14px;font-weight:600">🎯 Quick check ${diffBadge}</span>
     <button class="modal-close dismiss-quiz" style="font-size:14px">&#x2715;</button></div>
     <p style="font-size:14px;margin-bottom:12px">${esc(question)}</p>
     <textarea rows="3" class="quiz-textarea input-area" placeholder="Your answer…"></textarea>

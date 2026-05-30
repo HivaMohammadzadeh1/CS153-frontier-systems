@@ -437,11 +437,46 @@ def chat(req: ChatRequest):
 
 class QuizGenRequest(BaseModel):
     topic_id: str
+    student_id: Optional[str] = None
 
 
 class QuizGenResponse(BaseModel):
     question: str
     rubric: str
+    difficulty: str = "Easy"
+
+
+# Adaptive difficulty bands. `lo` is the inclusive lower bound on the blended
+# proficiency score (0..1). Questions get harder as the student improves.
+_QUIZ_BANDS = [
+    (0.0, "Easy",
+     "Make this an EASY warm-up: test recall and basic intuition of ONE core "
+     "concept. Answerable in 2-3 sentences. No math derivations, multi-part "
+     "questions, or obscure edge cases."),
+    (0.4, "Medium",
+     "Make this MODERATE: ask the student to apply one concept to a concrete, "
+     "realistic scenario. Light reasoning, answerable in 3-5 sentences."),
+    (0.65, "Hard",
+     "Make this CHALLENGING: require comparing two approaches or analyzing a "
+     "tradeoff / failure mode. Answerable in a short paragraph."),
+    (0.85, "Expert",
+     "Make this EXPERT-level: probe edge cases, quantitative reasoning, or "
+     "synthesis across multiple concepts. Assume strong mastery."),
+]
+
+
+def _quiz_difficulty(mastery_avg, recent_scores) -> tuple[str, str, float]:
+    """Blend topic mastery with recent quiz performance into a difficulty band.
+    New/unknown topics start gentle so students aren't thrown in the deep end."""
+    base = 0.2 if mastery_avg is None else float(mastery_avg)
+    if recent_scores:
+        ra = sum(recent_scores) / len(recent_scores)
+        base = 0.6 * base + 0.4 * ra
+    label, guidance = _QUIZ_BANDS[0][1], _QUIZ_BANDS[0][2]
+    for lo, lbl, g in _QUIZ_BANDS:
+        if base >= lo:
+            label, guidance = lbl, g
+    return label, guidance, base
 
 
 @app.post("/api/quiz/generate", response_model=QuizGenResponse)
@@ -457,18 +492,47 @@ def quiz_generate(req: QuizGenRequest):
                 (req.topic_id,),
             )
             excerpt = "\n\n".join(r["body"] for r in cur.fetchall())
+
+            mastery_avg = None
+            recent_scores: list[float] = []
+            if req.student_id:
+                cur.execute(
+                    "SELECT avg(m.score) AS a FROM mastery m "
+                    "JOIN semantic_items s ON s.id = m.concept_id "
+                    "WHERE m.student_id = %s AND s.topic_id = %s",
+                    (req.student_id, req.topic_id),
+                )
+                row = cur.fetchone()
+                mastery_avg = row["a"] if row and row["a"] is not None else None
+
+                cur.execute(
+                    "SELECT (payload->>'score')::float AS sc FROM episodic_events "
+                    "WHERE student_id = %s AND event_type = 'quiz_attempt' "
+                    "  AND payload->>'topic_id' = %s AND payload ? 'score' "
+                    "ORDER BY occurred_at DESC LIMIT 3",
+                    (req.student_id, req.topic_id),
+                )
+                recent_scores = [r["sc"] for r in cur.fetchall() if r["sc"] is not None]
     finally:
         conn.close()
     if not excerpt:
         raise HTTPException(status_code=400, detail=f"No material for topic '{req.topic_id}'")
+
+    label, guidance, _eff = _quiz_difficulty(mastery_avg, recent_scores)
     data = llm.complete_with_schema(
-        system="Generate ONE substantive quiz question on the given ML systems engineering topic.",
+        system=(
+            "Generate ONE quiz question on the given ML systems engineering topic, "
+            "calibrated to the student's current level. Keep it focused and clearly "
+            "worded; prefer testing understanding over trickiness. The rubric should "
+            "list the key points a correct answer must cover.\n\n"
+            f"DIFFICULTY — {label}: {guidance}"
+        ),
         user=f"TOPIC: {req.topic_id}\n\nMATERIAL EXCERPT:\n{excerpt[:3000]}",
         schema=QUIZ_QUESTION_SCHEMA,
         tool_name="submit_quiz_question",
         tool_description="Submit the generated quiz question and rubric.",
     )
-    return QuizGenResponse(question=data["question"], rubric=data["rubric"])
+    return QuizGenResponse(question=data["question"], rubric=data["rubric"], difficulty=label)
 
 
 class QuizScoreRequest(BaseModel):
