@@ -34,15 +34,19 @@ fi
 dep=""
 for size in "${SELECTED[@]}"; do
   wt="${WALLTIME[$size]:-04:00:00}"
+  # NOTE: do NOT use sbatch --export on this cluster — any explicit --export
+  # makes SLURM try to retrieve the user's login env, which fails here
+  # (user_env_retrieval_failed → job held). Instead export the vars into the
+  # submitting shell and let the default (ALL) propagation carry them.
   args=(
     --job-name "ft-$size"
     --time "$wt"
-    --export="ALL,SIZE_ID=$size,REPO=$REPO,TRAJ=$TRAJ,EPOCHS=$EPOCHS"
   )
   if [[ -n "$dep" ]]; then
     args+=(--dependency="afterany:$dep")
   fi
-  jid=$(sbatch --parsable "${args[@]}" "$SBATCH_SCRIPT")
+  jid=$(SIZE_ID="$size" REPO="$REPO" TRAJ="$TRAJ" EPOCHS="$EPOCHS" \
+        sbatch --parsable "${args[@]}" "$SBATCH_SCRIPT")
   echo "submitted $size (walltime $wt) as job $jid${dep:+ — runs after $dep}"
   dep="$jid"
 done
