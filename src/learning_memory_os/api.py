@@ -8,9 +8,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-# Project root: two levels up from src/learning_memory_os/api.py
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +27,9 @@ from learning_memory_os.agents.tutor import TutorAgent
 from learning_memory_os.logging_utils.interactions import InteractionLogger
 from learning_memory_os.ingestion.topic_loader import load_topics, resolve_prerequisite_titles
 from learning_memory_os.eval.quiz import QuizQuestion, score_answer
+
+# Project root: two levels up from src/learning_memory_os/api.py
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 # ---- Schemas for tool-use ----
@@ -84,9 +85,8 @@ def _llm_and_embedder():
 
 _TOPICS = load_topics(_PROJECT_ROOT / "config" / "topics.yaml")
 
-import yaml as _yaml
 _AREA_NAMES: dict[str, str] = (
-    _yaml.safe_load((_PROJECT_ROOT / "config" / "topics.yaml").read_text()) or {}
+    yaml.safe_load((_PROJECT_ROOT / "config" / "topics.yaml").read_text()) or {}
 ).get("areas", {})
 
 
@@ -382,7 +382,6 @@ def chat(req: ChatRequest):
                 pass  # silently ignore title-gen failures
 
         # Soft mastery bump for engaged concepts
-        from learning_memory_os.schemas.artifacts import ArtifactType
         for it in response.selected_items:
             # artifact_type is ArtifactType enum (str subclass); compare .value
             if it.artifact_type is not None and it.artifact_type.value == "concept":

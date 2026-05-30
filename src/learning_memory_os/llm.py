@@ -1,5 +1,4 @@
 import json
-import re
 from anthropic import Anthropic
 
 
@@ -22,6 +21,23 @@ class LLM:
             max_tokens=max_tokens,
         )
         return "".join(block.text for block in resp.content if hasattr(block, "text"))
+
+    def stream(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_tokens: int = 2048,
+    ):
+        """Yield text deltas as the model generates. Streamed via Anthropic's SDK."""
+        with self._client.messages.stream(
+            model=self.model,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            max_tokens=max_tokens,
+        ) as s:
+            for delta in s.text_stream:
+                yield delta
 
     def complete_json(
         self,

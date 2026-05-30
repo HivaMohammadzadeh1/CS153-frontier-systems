@@ -9,3 +9,5 @@ logs/
 data/runtime/
 data/trajectories/*.jsonl
 data/router_checkpoints/
+tmp/
+*.pkg

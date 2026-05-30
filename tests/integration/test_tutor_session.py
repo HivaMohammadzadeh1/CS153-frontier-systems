@@ -1,6 +1,7 @@
 """Smoke test the multi-turn session CLI surface (help)."""
 
-import subprocess, sys
+import subprocess
+import sys
 
 
 def test_tutor_session_help():

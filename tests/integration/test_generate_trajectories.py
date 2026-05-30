@@ -1,4 +1,5 @@
-import subprocess, sys
+import subprocess
+import sys
 
 
 def test_generate_trajectories_help():

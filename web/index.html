@@ -4,8 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Memex — ML Systems Tutor</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     // Apply saved theme before first paint to avoid a flash.
@@ -16,7 +18,7 @@
       } catch (e) {}
     })();
     tailwind.config = {
-      theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], display: ['Space Grotesk', 'Inter', 'sans-serif'] } } },
+      theme: { extend: { fontFamily: { sans: ['Hanken Grotesk', 'system-ui', 'sans-serif'], display: ['Bricolage Grotesque', 'Hanken Grotesk', 'sans-serif'], mono: ['JetBrains Mono', 'ui-monospace', 'monospace'] } } },
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -128,6 +130,9 @@
       <div id="routingBody" class="space-y-3 text-sm"></div>
     </div>
   </div>
+
+  <!-- Confetti celebration layer -->
+  <canvas id="confettiCanvas" aria-hidden="true"></canvas>
 
   <!-- Toast layer (level-up / streak) -->
   <div id="toastLayer" class="toast-layer"></div>

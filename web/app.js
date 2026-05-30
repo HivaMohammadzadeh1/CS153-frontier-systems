@@ -26,6 +26,14 @@ function areaName(letter) {
   return letter && letter !== "?" ? `Area ${letter}` : "Other topics";
 }
 
+// Sort area keys alphabetically, but always push the catch-all "?" ("Other
+// topics") to the bottom of any list.
+function sortAreaKey(a, b) {
+  if (a === "?") return 1;
+  if (b === "?") return -1;
+  return String(a).localeCompare(String(b));
+}
+
 // ── Helpers ────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "")
@@ -57,6 +65,95 @@ function toast(html) {
   $("toastLayer").appendChild(t);
   setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .4s"; }, 2600);
   setTimeout(() => t.remove(), 3100);
+}
+
+// ── Confetti 🎉 ─────────────────────────────────────────────────
+function confetti(opts = {}) {
+  const canvas = $("confettiCanvas");
+  if (!canvas) return;
+  try { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch (_) {}
+  const ctx = canvas.getContext("2d");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = window.innerWidth, H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const colors = ["#e0922f", "#cf6630", "#cd8a1e", "#a23d1f", "#2f7d4f", "#1b1a17", "#d8a24a"];
+  const count = opts.count || 90;
+  const cx = opts.x != null ? opts.x : W / 2;
+  const cy = opts.y != null ? opts.y : H * 0.32;
+  const parts = [];
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 4 + Math.random() * 9;
+    parts.push({
+      x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 4,
+      g: 0.16 + Math.random() * 0.12, size: 5 + Math.random() * 7,
+      rot: Math.random() * Math.PI, vr: (Math.random() - .5) * .3,
+      color: colors[(Math.random() * colors.length) | 0], life: 0, ttl: 90 + Math.random() * 40,
+    });
+  }
+  let frame = 0;
+  (function tick() {
+    ctx.clearRect(0, 0, W, H);
+    let alive = false;
+    for (const p of parts) {
+      if (p.life > p.ttl) continue;
+      alive = true;
+      p.life++; p.vy += p.g; p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.vx *= .99;
+      ctx.save(); ctx.globalAlpha = Math.max(0, 1 - p.life / p.ttl);
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color;
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6); ctx.restore();
+    }
+    if (alive && ++frame < 240) requestAnimationFrame(tick);
+    else ctx.clearRect(0, 0, W, H);
+  })();
+}
+
+// ── XP / Levels ────────────────────────────────────────────────
+const LEVEL_TITLES = ["Newcomer", "Curious Mind", "Apprentice", "Explorer", "Tinkerer",
+  "Practitioner", "Engineer", "Architect", "Specialist", "Systems Sage", "Grandmaster"];
+function xpFromStats(st) {
+  st = st || {};
+  return (st.questions || 0) * 10 + (st.quizzes || 0) * 30
+    + (st.concepts_mastered || 0) * 60 + (st.active_days || 0) * 20;
+}
+function levelInfo(xp) {
+  let lvl = 1, need = 150, cum = 0;
+  while (xp >= cum + need) { cum += need; lvl++; need = Math.round(need * 1.35); }
+  const into = xp - cum;
+  return {
+    level: lvl, title: LEVEL_TITLES[Math.min(lvl - 1, LEVEL_TITLES.length - 1)],
+    pct: Math.max(0, Math.min(100, Math.round((into / need) * 100))), toNext: need - into,
+  };
+}
+// Celebrate only on a genuine increase after the first recorded level.
+function maybeLevelUp(level) {
+  const prev = parseInt(localStorage.getItem("memex.level") || "0", 10);
+  if (level > prev) {
+    localStorage.setItem("memex.level", String(level));
+    if (prev > 0) { toast(`⭐ <span class="t-grad">Level ${level} — leveled up!</span>`); confetti({ count: 120 }); }
+  }
+}
+
+// ── Achievements ───────────────────────────────────────────────
+const ACHIEVEMENTS = [
+  { ico: "🌱", name: "First Steps", sub: "Ask 1 question", test: (s) => (s.questions || 0) >= 1 },
+  { ico: "🔥", name: "On Fire", sub: "5-day streak", test: (s) => s._streak >= 5 },
+  { ico: "🧠", name: "Curious", sub: "25 questions", test: (s) => (s.questions || 0) >= 25 },
+  { ico: "🎯", name: "Quizzer", sub: "5 quizzes", test: (s) => (s.quizzes || 0) >= 5 },
+  { ico: "🏅", name: "Sharpshooter", sub: "80% avg quiz", test: (s) => (s.avg_quiz_score || 0) >= 0.8 },
+  { ico: "🏆", name: "Master", sub: "10 concepts", test: (s) => (s.concepts_mastered || 0) >= 10 },
+  { ico: "🧭", name: "Explorer", sub: "10 topics", test: (s) => (s.topics_touched || 0) >= 10 },
+  { ico: "⚡", name: "Dedicated", sub: "7 active days", test: (s) => (s.active_days || 0) >= 7 },
+];
+function renderAchievements(st) {
+  const s = Object.assign({ _streak: currentStreak() }, st || {});
+  return ACHIEVEMENTS.map((a) => {
+    const on = a.test(s);
+    return `<div class="ach ${on ? "unlocked" : "locked"}" title="${esc(a.name)} — ${esc(a.sub)}">
+      <div class="ach-ico">${a.ico}</div><div class="ach-name">${esc(a.name)}</div>
+      <div class="ach-sub">${on ? "Unlocked" : esc(a.sub)}</div></div>`;
+  }).join("");
 }
 
 // ── Theme ──────────────────────────────────────────────────────
@@ -93,6 +190,7 @@ function bumpStreak() {
   localStorage.setItem("memex.streak.count", String(count));
   renderStreak();
   toast(`🔥 <span class="t-grad">${count}-day streak!</span>`);
+  confetti({ count: 60 });
   return count;
 }
 function renderStreak() { const el = $("streakCount"); if (el) el.textContent = currentStreak(); }
@@ -207,7 +305,7 @@ function deriveSummary(data) {
   });
   const areas = Object.entries(areaAgg)
     .map(([area, vals]) => ({ area, mastery: vals.reduce((a, b) => a + b, 0) / vals.length }))
-    .sort((a, b) => a.area.localeCompare(b.area));
+    .sort((a, b) => sortAreaKey(a.area, b.area));
 
   // Up next: lowest in-progress topic, else first untouched catalog topic
   const inProgress = withData.filter((t) => t.avg_mastery < 0.7).sort((a, b) => a.avg_mastery - b.avg_mastery);
@@ -244,6 +342,18 @@ async function renderHome() {
   const homeStatsHtml = `<div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">${
     homeStats.map((x) => `<div class="stat"><div class="stat-num" data-count="${x.num}">0</div><div class="stat-lbl">${x.lbl}</div></div>`).join("")
   }</div>`;
+
+  const xp = xpFromStats(ast);
+  const li = levelInfo(xp);
+  const levelHtml = `
+    <div class="card level-card" style="margin-bottom:16px">
+      <div class="level-badge"><div><b>${li.level}</b><small>LVL</small></div></div>
+      <div class="level-body">
+        <div class="level-top"><span class="level-name">${esc(li.title)}</span>
+          <span class="level-xp">${xp} XP · ${li.toNext} to L${li.level + 1}</span></div>
+        <div class="level-bar"><i data-w="${li.pct}"></i></div>
+      </div>
+    </div>`;
 
   const areasHtml = s.areas.length
     ? s.areas.map((a) => `
@@ -304,6 +414,7 @@ async function renderHome() {
       </div>
 
       ${homeStatsHtml}
+      ${levelHtml}
 
       <div class="grid-cards grid-2">
         <div class="card">
@@ -311,7 +422,7 @@ async function renderHome() {
             <div class="ring" id="homeRing"><span class="ring-val"><span id="homeRingVal">0</span><small>%</small></span></div>
             <div>
               <div class="tile-kicker">Overall mastery</div>
-              <div style="font-family:'Space Grotesk';font-size:20px;font-weight:600;margin:2px 0 8px">${s.hasData ? overallPct + "% there" : "Just getting started"}</div>
+              <div style="font-family:var(--font-display);font-size:22px;font-weight:600;margin:2px 0 8px">${s.hasData ? overallPct + "% there" : "Just getting started"}</div>
               ${areasHtml}
             </div>
           </div>
@@ -327,7 +438,7 @@ async function renderHome() {
       <div class="card card-grad" style="margin-top:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <div style="flex:1;min-width:200px">
           <div class="tile-kicker">Ready to learn?</div>
-          <div style="font-family:'Space Grotesk';font-size:18px;font-weight:600">Jump back into the tutor</div>
+          <div style="font-family:var(--font-display);font-size:19px;font-weight:600">Jump back into the tutor</div>
         </div>
         <button class="btn btn-primary" id="homeContinue">Continue learning →</button>
         <button class="btn btn-ghost" id="homeQuiz">🎯 Quiz me</button>
@@ -340,8 +451,9 @@ async function renderHome() {
     if (ring) ring.style.setProperty("--val", overallPct);
     countUp($("homeRingVal"), overallPct);
     el.querySelectorAll(".stat-num[data-count]").forEach((n) => countUp(n, parseInt(n.dataset.count, 10)));
-    el.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+    el.querySelectorAll(".bar > i[data-w], .level-bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
   });
+  maybeLevelUp(li.level);
 
   // Wire actions
   el.querySelectorAll("[data-seed]").forEach((b) =>
@@ -382,6 +494,20 @@ async function renderProfile() {
   const initial = (state.studentId || "?").trim().charAt(0).toUpperCase() || "?";
   const streak = currentStreak();
   const avgQuiz = st.avg_quiz_score == null ? "—" : Math.round(st.avg_quiz_score * 100) + "%";
+
+  const pxp = xpFromStats(st);
+  const pli = levelInfo(pxp);
+  const levelHtml = `
+    <div class="card level-card" style="margin-bottom:20px">
+      <div class="level-badge"><div><b>${pli.level}</b><small>LVL</small></div></div>
+      <div class="level-body">
+        <div class="level-top"><span class="level-name">${esc(pli.title)}</span>
+          <span class="level-xp">${pxp} XP · ${pli.toNext} to L${pli.level + 1}</span></div>
+        <div class="level-bar"><i data-w="${pli.pct}"></i></div>
+      </div>
+    </div>`;
+  const achHtml = `<div class="section-label">Achievements</div>
+    <div class="card"><div class="ach-grid">${renderAchievements(st)}</div></div>`;
 
   const stats = [
     { num: st.questions ?? 0, lbl: "Questions asked", grad: true },
@@ -448,7 +574,10 @@ async function renderProfile() {
         </div>
       </div>
 
+      ${levelHtml}
+
       <div class="stat-grid">${statHtml}</div>
+      ${achHtml}
       ${sparkHtml}
 
       <div class="grid-cards grid-2" style="margin-top:8px">
@@ -462,7 +591,7 @@ async function renderProfile() {
 
   requestAnimationFrame(() => {
     el.querySelectorAll(".stat-num[data-count]").forEach((n) => countUp(n, parseInt(n.dataset.count, 10)));
-    el.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+    el.querySelectorAll(".bar > i[data-w], .level-bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
     el.querySelectorAll(".spark-bar[data-h]").forEach((b) => { b.style.height = b.dataset.h + "%"; });
   });
 }
@@ -533,7 +662,7 @@ async function renderPath() {
   // Group catalog topics by area
   const byArea = {};
   Object.entries(TOPIC_MAP).forEach(([id, meta]) => { (byArea[meta.area] ||= []).push({ id, ...meta }); });
-  const areas = Object.keys(byArea).sort();
+  const areas = Object.keys(byArea).sort(sortAreaKey);
 
   if (!areas.length) {
     el.innerHTML = `<div class="view-inner"><div class="empty-state"><div class="em-ico">🎯</div><div class="em-title">No topics loaded</div></div></div>`;
@@ -884,6 +1013,7 @@ async function submitQuiz(card, msgIdx, question, rubric, topicId) {
       <span style="font-size:22px;font-weight:700;color:${col}">${pct}%</span>
       <span style="font-size:12px;color:var(--text-muted)">${score >= 0.8 ? "Great work!" : score >= 0.6 ? "Partial — keep going." : "Needs more work."}</span></div>
       <p style="font-size:12px;color:var(--text-muted);font-style:italic">${esc(rationale)}</p>`;
+    if (score >= 0.8) { toast(`🎉 <span class="t-grad">Nailed it — ${pct}%!</span>`); confetti({ count: 85 }); }
     loadProgress(true);
     if (score < 0.6) {
       const diagBtn = document.createElement("button");
@@ -1005,6 +1135,15 @@ window.addEventListener("hashchange", routeFromHash);
   applyTheme(document.documentElement.getAttribute("data-theme") || "light");
   renderStreak();
   buildStarterGrid();
+  const SUBS = [
+    "Ask anything about ML systems engineering.",
+    "Your AI study buddy for ML systems 🚀",
+    "No question is too small — let's dig in.",
+    "Learn it, quiz it, master it. 🎯",
+    "Turn confusion into mastery, one question at a time.",
+  ];
+  const subEl = document.querySelector(".welcome-sub");
+  if (subEl) subEl.textContent = SUBS[Math.floor(Math.random() * SUBS.length)];
   await loadTopics();
   await loadConversations();
   await maybeShowWelcomeBack();

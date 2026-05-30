@@ -11,8 +11,6 @@ Usage:
 """
 
 import json
-import random
-from pathlib import Path
 from collections import defaultdict
 import typer
 
@@ -21,7 +19,7 @@ from learning_memory_os.llm import LLM
 from learning_memory_os.memory.store import connect
 from learning_memory_os.memory.student import StudentStore
 from learning_memory_os.eval.quiz import (
-    QuizQuestion, score_answer, append_quiz_log, average_score, QuizScore,
+    QuizQuestion, score_answer, append_quiz_log, average_score,
 )
 
 
