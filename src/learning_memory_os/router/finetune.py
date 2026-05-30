@@ -98,7 +98,10 @@ def finetune(
         load_dtype = torch.bfloat16
     else:
         load_dtype = torch.float32
-    load_kwargs: dict = {"dtype": load_dtype}
+    # `torch_dtype` is the correct kwarg for transformers <4.49 (the version the
+    # NGC container's torch supports). Newer transformers renamed it to `dtype`,
+    # but that needs a newer torch than the container ships.
+    load_kwargs: dict = {"torch_dtype": load_dtype}
 
     if cfg.use_4bit_base:
         qc = _maybe_quant_config()
