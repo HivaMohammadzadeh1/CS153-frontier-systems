@@ -23,7 +23,7 @@ from learning_memory_os.memory.semantic import SemanticStore
 from learning_memory_os.memory.student import StudentStore
 from learning_memory_os.memory.episodic import EpisodicStore
 from learning_memory_os.selector.engine import RoutingEngine
-from learning_memory_os.agents.tutor import TutorAgent
+from learning_memory_os.agents.tutor import TUTOR_SYSTEM
 from learning_memory_os.logging_utils.interactions import InteractionLogger
 from learning_memory_os.ingestion.topic_loader import load_topics, resolve_prerequisite_titles
 from learning_memory_os.eval.quiz import QuizQuestion, score_answer
@@ -385,166 +385,385 @@ def _inject_css():
         """
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* ---- Typography ---- */
+/* ============================================================
+   Design tokens
+   ============================================================ */
+:root {
+    --bg:           #fafbfd;
+    --surface:      #ffffff;
+    --surface-2:    #f4f5f9;
+    --border:       #e6e8ef;
+    --border-soft:  #eef0f5;
+    --text:         #0f172a;
+    --text-muted:   #5a6275;
+    --text-soft:    #8a91a3;
+    --accent:       #6366f1;
+    --accent-soft:  #eef0ff;
+    --accent-text:  #3730a3;
+    --success:      #15803d;
+    --success-soft: #e7f7ec;
+    --warn:         #b45309;
+    --warn-soft:    #fff5e0;
+    --danger:       #b91c1c;
+    --danger-soft:  #fee2e2;
+    --shadow-sm:    0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md:    0 2px 6px rgba(15, 23, 42, 0.06);
+    --radius-sm:    8px;
+    --radius:       12px;
+    --radius-lg:    16px;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
 html, body, [class*="css"], [data-testid="stMarkdownContainer"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    color: var(--text);
+}
+.stApp { background: var(--bg); }
+
+/* Tighten the top padding of the main content */
+.main .block-container { padding-top: 1.5rem; }
+
+/* ============================================================
+   Tabs — pill-style with indigo accent
+   ============================================================ */
+[data-testid="stTabs"] button[role="tab"] {
+    font-weight: 500;
+    color: var(--text-muted);
+    padding: 10px 22px;
+    border-radius: 999px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    transition: all 0.15s ease;
+    margin-right: 6px;
+}
+[data-testid="stTabs"] button[role="tab"]:hover {
+    color: var(--text);
+    background: var(--surface-2) !important;
+}
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    background: var(--surface) !important;
+    color: var(--accent-text) !important;
+    border-color: var(--border) !important;
+    box-shadow: var(--shadow-sm);
+}
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 0;
+    border-bottom: 1px solid var(--border-soft);
+    padding-bottom: 8px;
+    margin-bottom: 18px;
+}
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    background: transparent !important;
 }
 
-/* ---- Base ---- */
-.stApp { background: #f7f8fb; }
-
-/* ---- Rounded borders on containers ---- */
+/* ============================================================
+   Bordered containers — consistent surface treatment
+   ============================================================ */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius: 12px !important;
-    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+    border-radius: var(--radius) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: var(--shadow-sm);
+    background: var(--surface);
 }
 
-/* ---- Chat message bubbles ---- */
+/* ============================================================
+   Chat message bubbles
+   ============================================================ */
 [data-testid="stChatMessage"] {
     background: transparent !important;
-    border-radius: 12px;
-    padding: 10px 14px !important;
-    margin-bottom: 10px;
-    line-height: 1.55;
+    border-radius: var(--radius);
+    padding: 12px 16px !important;
+    margin-bottom: 12px;
+    line-height: 1.6;
 }
 [data-testid="stChatMessage"][aria-label*="user"] {
-    background: #f1f3f5 !important;
+    background: var(--surface-2) !important;
 }
 [data-testid="stChatMessage"][aria-label*="assistant"] {
-    background: #ffffff !important;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 1px 2px rgba(17,24,39,0.05);
+    background: var(--surface) !important;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
 }
 
-/* ---- Cards (quiz / diag) ---- */
-.lm-card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 16px 18px;
-    margin: 12px 0;
-    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+/* ============================================================
+   Sidebar — denser, more refined
+   ============================================================ */
+[data-testid="stSidebar"] {
+    background: var(--surface);
+    border-right: 1px solid var(--border-soft);
 }
-.lm-quiz-card  { border-left: 4px solid #5b6cff; }
-.lm-diag-card  { border-left: 4px solid #f59e0b; }
-.lm-card-header { font-weight: 600; font-size: 16px; color: #111827; margin-bottom: 8px; }
-.lm-card-sub    { color: #6b7280; font-size: 13px; }
-
-/* ---- Legacy card aliases (kept for any remaining inline refs) ---- */
-.quiz-card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-left: 4px solid #5b6cff;
-    padding: 16px 18px;
-    border-radius: 12px;
-    margin: 12px 0;
-    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    color: var(--text);
 }
-.diag-card {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-left: 4px solid #f59e0b;
-    padding: 16px 18px;
-    border-radius: 12px;
-    margin: 12px 0;
-    box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+[data-testid="stSidebar"] h3 {
+    font-size: 10.5px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-soft) !important;
+    font-weight: 600 !important;
+    margin: 22px 0 8px 0 !important;
 }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    margin-bottom: 4px;
+    font-size: 0.92rem;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stSlider {
+    font-size: 0.9rem;
+}
+[data-testid="stSidebar"] hr { margin: 14px 0 !important; }
 
-/* ---- Score colours (new classes) ---- */
-.lm-score { font-size: 36px; font-weight: 700; font-feature-settings: 'tnum';
-            line-height: 1; margin: 8px 0 4px; }
-.lm-score--good { color: #16a34a; }
-.lm-score--mid  { color: #d97706; }
-.lm-score--bad  { color: #dc2626; }
-
-/* ---- Legacy score aliases ---- */
-.score-good { color: #16a34a; font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
-.score-mid  { color: #d97706; font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
-.score-bad  { color: #dc2626; font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
-
-/* ---- Muted / italic helpers ---- */
-.muted     { color: #6b7280; font-size: 0.92em; font-style: italic; }
-.lm-muted  { color: #6b7280; font-style: italic; font-size: 0.92em; }
-.ref-list  { font-size: 0.85em; color: #4b5563; }
-
-/* ---- References disclosure ---- */
-.lm-refs { font-size: 0.88em; color: #4b5563; margin-top: 12px; }
-.lm-refs summary { cursor: pointer; color: #6b7280; font-weight: 500; user-select: none; }
-.lm-refs ol { margin: 6px 0 0 18px; padding: 0; }
-
-/* ---- Hero header ---- */
-.lm-hero { padding: 8px 0 16px; }
-.lm-title { font-size: 28px; font-weight: 700; color: #111827; margin: 0; line-height: 1.2; }
-.lm-subtitle { font-size: 14px; color: #6b7280; margin-top: 4px; line-height: 1.4; }
-.lm-stats { display: inline-flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.lm-stat-pill { background: #eef2ff; color: #3730a3; padding: 4px 10px; border-radius: 999px;
-                font-size: 12px; font-weight: 500; }
-
-/* ---- Legacy hero aliases ---- */
-.hero-title    { font-size: 28px; font-weight: 700; color: #111827; margin-bottom: 2px; }
-.hero-subtitle { font-size: 14px; color: #6b7280; margin-bottom: 8px; line-height: 1.4; }
-.hero-stats    { font-size: 0.85rem; color: #9ca3af; margin-bottom: 0; }
-
-/* ---- Suggested follow-up chips ---- */
-.followup-label {
-    font-size: 0.8rem;
-    color: #6b7280;
+/* ============================================================
+   Chips / pills
+   ============================================================ */
+.lm-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font-size: 0.78rem;
+    font-weight: 500;
+    margin-right: 6px;
     margin-bottom: 4px;
 }
+.lm-chip--neutral { background: var(--surface-2); color: var(--text-muted); }
+.lm-chip--success { background: var(--success-soft); color: var(--success); }
+.lm-chip--warn    { background: var(--warn-soft);    color: var(--warn); }
+.lm-chip--danger  { background: var(--danger-soft);  color: var(--danger); }
+.lm-chip-dot {
+    width: 6px; height: 6px; border-radius: 999px; background: currentColor;
+    display: inline-block;
+}
 
-/* ---- Progress badge row ---- */
+/* ============================================================
+   Mini progress bar (mastery)
+   ============================================================ */
+.lm-meter {
+    background: var(--surface-2);
+    border-radius: 999px;
+    height: 6px;
+    overflow: hidden;
+    margin: 2px 0 8px 0;
+}
+.lm-meter-fill { height: 100%; border-radius: 999px; }
+.lm-meter-fill--good { background: var(--success); }
+.lm-meter-fill--mid  { background: var(--warn); }
+.lm-meter-fill--low  { background: #d97706; }
+
+.lm-mastery-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.82rem; color: var(--text-muted); margin-bottom: 2px;
+}
+.lm-mastery-row strong { color: var(--text); font-weight: 500; }
+
+/* ============================================================
+   Hero
+   ============================================================ */
+.lm-hero {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 0 16px 0;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--border-soft);
+}
+.lm-hero-brand { display: flex; align-items: center; gap: 12px; }
+.lm-hero-mark {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 18px;
+    box-shadow: var(--shadow-md);
+}
+.lm-hero-text { line-height: 1.2; }
+.lm-hero-name { font-size: 1.05rem; font-weight: 600; color: var(--text); }
+.lm-hero-sub  { font-size: 0.82rem; color: var(--text-soft); }
+.lm-hero-stats { display: inline-flex; gap: 6px; }
+
+/* ============================================================
+   Cards (quiz / diag) — kept, palette aligned
+   ============================================================ */
+.lm-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin: 12px 0;
+    box-shadow: var(--shadow-sm);
+}
+.lm-quiz-card  { border-left: 4px solid var(--accent); }
+.lm-diag-card  { border-left: 4px solid var(--warn); }
+.lm-card-header { font-weight: 600; font-size: 16px; color: var(--text); margin-bottom: 8px; }
+.lm-card-sub    { color: var(--text-muted); font-size: 13px; }
+
+.quiz-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    margin: 12px 0;
+    box-shadow: var(--shadow-sm);
+}
+.diag-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--warn);
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    margin: 12px 0;
+    box-shadow: var(--shadow-sm);
+}
+
+/* ============================================================
+   Score colors
+   ============================================================ */
+.lm-score { font-size: 36px; font-weight: 700; font-feature-settings: 'tnum';
+            line-height: 1; margin: 8px 0 4px; }
+.lm-score--good { color: var(--success); }
+.lm-score--mid  { color: var(--warn); }
+.lm-score--bad  { color: var(--danger); }
+.score-good { color: var(--success); font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
+.score-mid  { color: var(--warn);    font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
+.score-bad  { color: var(--danger);  font-weight: 700; font-size: 36px; font-feature-settings: 'tnum'; }
+
+/* ============================================================
+   Muted helpers, references
+   ============================================================ */
+.muted     { color: var(--text-muted); font-size: 0.92em; font-style: italic; }
+.lm-muted  { color: var(--text-muted); font-style: italic; font-size: 0.92em; }
+.ref-list  { font-size: 0.85em; color: var(--text-muted); }
+.lm-refs   { font-size: 0.88em; color: var(--text-muted); margin-top: 12px; }
+.lm-refs summary { cursor: pointer; color: var(--text-soft); font-weight: 500; user-select: none; }
+.lm-refs ol { margin: 6px 0 0 18px; padding: 0; }
+
+/* ============================================================
+   Legacy badge classes — palette aligned
+   ============================================================ */
 .badge {
     display: inline-block;
-    background: #eef2ff;
-    color: #3730a3;
+    background: var(--accent-soft);
+    color: var(--accent-text);
     border-radius: 999px;
     padding: 3px 10px;
     font-size: 0.75rem;
     margin-right: 4px;
     font-weight: 500;
 }
-.badge-warn {
-    background: #fff7ed;
-    color: #b45309;
+.badge-warn { background: var(--warn-soft); color: var(--warn); }
+
+/* ============================================================
+   Suggested follow-up label
+   ============================================================ */
+.followup-label {
+    font-size: 0.78rem;
+    color: var(--text-soft);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 6px 0;
 }
 
-/* ---- Progress bars — thinner ---- */
+/* ============================================================
+   Progress bars — thinner, indigo
+   ============================================================ */
 [data-testid="stProgress"] > div > div > div > div {
     height: 6px !important;
+    background: var(--accent) !important;
+}
+[data-testid="stProgress"] > div > div > div {
+    background: var(--surface-2) !important;
+    border-radius: 999px;
 }
 
-/* ---- Sidebar section headers ---- */
-[data-testid="stSidebar"] h3 {
-    font-size: 11px !important;
+/* ============================================================
+   Section labels (small caps, used in main area headers)
+   ============================================================ */
+.lm-section-label {
+    font-size: 0.78rem; color: var(--text-soft);
+    font-weight: 600; letter-spacing: 0.06em;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #6b7280 !important;
-    font-weight: 600 !important;
-    margin-top: 18px !important;
-    margin-bottom: 6px !important;
+    margin: 24px 0 10px 0;
 }
 
-/* ---- Chat input ---- */
+/* ============================================================
+   Form inputs — chat input, text input
+   ============================================================ */
 [data-testid="stChatInput"] textarea {
-    border-radius: 10px !important;
-    border: 1px solid #e5e7eb !important;
+    border-radius: var(--radius) !important;
+    border: 1px solid var(--border) !important;
     font-family: 'Inter', sans-serif !important;
+    background: var(--surface) !important;
+}
+[data-testid="stChatInput"] textarea:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-soft) !important;
+}
+.stTextInput input {
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--border) !important;
+}
+.stSelectbox [data-baseweb="select"] > div {
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--border) !important;
 }
 
-/* ---- Buttons ---- */
+/* ============================================================
+   Buttons — secondary by default, primary indigo on hover
+   ============================================================ */
 .stButton > button {
-    border-radius: 10px !important;
+    border-radius: var(--radius-sm) !important;
     font-weight: 500 !important;
     font-family: 'Inter', sans-serif !important;
-    border: 1px solid #e5e7eb !important;
-    background: #ffffff !important;
-    color: #111827 !important;
+    border: 1px solid var(--border) !important;
+    background: var(--surface) !important;
+    color: var(--text) !important;
     transition: all 0.15s ease;
+    box-shadow: var(--shadow-sm);
 }
 .stButton > button:hover {
-    border-color: #5b6cff !important;
-    color: #5b6cff !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: var(--accent-soft) !important;
 }
+
+/* Primary buttons used as the active tab indicator */
+.stButton > button[kind="primary"] {
+    background: var(--accent) !important;
+    color: #fff !important;
+    border-color: var(--accent) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: #5054e0 !important;
+    border-color: #5054e0 !important;
+    color: #fff !important;
+}
+
+/* Metric — tighter typography */
+[data-testid="stMetric"] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-sm);
+}
+[data-testid="stMetricLabel"] {
+    color: var(--text-soft) !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+[data-testid="stMetricValue"] {
+    color: var(--text) !important;
+    font-weight: 600 !important;
+}
+
+/* Divider line color */
+hr { border-color: var(--border-soft) !important; }
 </style>
 """
     )
@@ -562,18 +781,21 @@ def _render_hero():
     st.markdown(
         f"""
 <div class="lm-hero">
-  <h1 class="lm-title">Learning Memory OS</h1>
-  <p class="lm-subtitle">Context-routed tutor for ML systems engineers</p>
-  <div class="lm-stats">
-    <span class="lm-stat-pill">{n_topics} topics</span>
-    <span class="lm-stat-pill">{artifact_str}</span>
-    <span class="lm-stat-pill">CS153</span>
+  <div class="lm-hero-brand">
+    <span class="lm-hero-mark">M</span>
+    <div class="lm-hero-text">
+      <div class="lm-hero-name">Memex</div>
+      <div class="lm-hero-sub">Context-routed ML systems tutor</div>
+    </div>
+  </div>
+  <div class="lm-hero-stats">
+    <span class="lm-chip lm-chip--neutral">{n_topics} topics</span>
+    <span class="lm-chip lm-chip--neutral">{artifact_str}</span>
   </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
-    st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -582,32 +804,26 @@ def _render_hero():
 
 
 def _render_left_sidebar(student_id_default: str = "demo-user"):
-    st.sidebar.markdown("### Learning Memory OS")
-    st.sidebar.caption("CS 153 — context-routed tutor demo")
-    st.sidebar.divider()
+    student_id = st.sidebar.text_input("Student ID", value=student_id_default, label_visibility="collapsed", placeholder="Student ID")
 
-    student_id = st.sidebar.text_input("Student ID", value=student_id_default)
-
-    # Topic chooser lives in the main-area header now (see _render_topic_header).
-    # We still read its value here so downstream code that expects topic_id keeps working.
-    topics = _topics()
     if "topic_choice" not in st.session_state:
         st.session_state.topic_choice = "(auto)"
-    topic_choice = st.session_state.topic_choice
-    topic_id = None if topic_choice == "(auto)" else topic_choice
+    topic_id = None if st.session_state.topic_choice == "(auto)" else st.session_state.topic_choice
 
-    # XTrace status indicator (still surfaced in sidebar as a system note).
+    # Token budget no longer surfaced in the UI; read the fixed default from settings.
+    budget = _settings().default_token_budget
+
     xtrace = _xtrace_client()
     if xtrace is None:
-        st.sidebar.caption(":grey[Long-term memory: off (set XTRACE_API_KEY)]")
+        st.sidebar.markdown(
+            "<div style='margin-top:8px; padding:8px 12px; background:var(--surface-2); "
+            "border-radius:8px; font-size:0.78rem; color:var(--text-muted);'>"
+            "Long-term memory off — set <code>XTRACE_API_KEY</code> to enable."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-    budget = st.sidebar.slider(
-        "Token budget", min_value=1000, max_value=32000, value=3000, step=500
-    )
-
-    st.sidebar.divider()
-
-    # Student mastery + misconceptions
+    # Pull student data once.
     conn = _new_conn()
     try:
         student_store = StudentStore(conn)
@@ -615,37 +831,90 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
         conn.commit()
         mastery = student_store.mastery_for(student_id)
         misconceptions = student_store.active_misconceptions(student_id)
+        # Map concept ids → titles so the sidebar shows readable names, not UUIDs.
+        concept_titles: dict[str, str] = {}
+        if mastery:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text AS id, title FROM semantic_items WHERE id::text = ANY(%s)",
+                    ([m.concept_id for m in mastery],),
+                )
+                concept_titles = {r["id"]: r["title"] or "(untitled)" for r in cur.fetchall()}
     finally:
         conn.close()
 
-    st.sidebar.subheader("Mastery state")
+    # --- Mastery ---
+    st.sidebar.markdown("### Mastery")
     if mastery:
-        for m in mastery[:8]:
-            st.sidebar.write(f"`{m.concept_id[:8]}` {m.score:.2f}")
+        top_mastery = sorted(mastery, key=lambda m: m.score, reverse=True)[:6]
+        for m in top_mastery:
+            score = m.score
+            fill_class = (
+                "lm-meter-fill--good" if score >= 0.7
+                else "lm-meter-fill--mid" if score >= 0.4
+                else "lm-meter-fill--low"
+            )
+            pct = int(score * 100)
+            title = concept_titles.get(m.concept_id, m.concept_id[:10])
+            label = title if len(title) <= 22 else title[:20] + "…"
+            st.sidebar.markdown(
+                f"<div class='lm-mastery-row'>"
+                f"<strong title='{title}'>{label}</strong>"
+                f"<span>{pct}%</span>"
+                f"</div>"
+                f"<div class='lm-meter'>"
+                f"<div class='lm-meter-fill {fill_class}' style='width:{pct}%'></div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
     else:
-        st.sidebar.caption("(no mastery recorded yet)")
+        st.sidebar.markdown(
+            "<div style='font-size:0.85rem; color:var(--text-soft); padding:4px 0;'>"
+            "No mastery yet — ask a question and take a quiz."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-    st.sidebar.divider()
-
-    st.sidebar.subheader("Active misconceptions")
+    # --- Misconceptions ---
+    st.sidebar.markdown("### Misconceptions")
     if misconceptions:
         for m in misconceptions[:5]:
-            desc = m["description"] or ""
-            st.sidebar.write(f"- {desc[:80]}{'...' if len(desc) > 80 else ''}")
+            desc = (m["description"] or "")[:90]
+            st.sidebar.markdown(
+                f"<div style='display:flex; gap:8px; align-items:flex-start; "
+                f"padding:6px 10px; margin-bottom:6px; background:var(--danger-soft); "
+                f"border-radius:8px; font-size:0.82rem; color:var(--danger); line-height:1.4;'>"
+                f"<span style='flex-shrink:0; width:6px; height:6px; border-radius:50%; "
+                f"background:var(--danger); margin-top:6px;'></span>"
+                f"<span>{desc}{'...' if len(m['description'] or '') > 90 else ''}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
     else:
-        st.sidebar.caption("(none detected yet)")
+        st.sidebar.markdown(
+            "<div style='font-size:0.85rem; color:var(--text-soft); padding:4px 0;'>"
+            "None detected."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     st.sidebar.divider()
 
-    # Clear chat — two-step confirm
+    # --- Clear chat — two-step confirm ---
     if not st.session_state.confirm_clear:
-        if st.sidebar.button("Clear chat"):
+        if st.sidebar.button("Clear chat", use_container_width=True):
             st.session_state.confirm_clear = True
             st.rerun()
     else:
-        st.sidebar.warning("This will clear all chat history. Confirm?")
+        st.sidebar.markdown(
+            "<div style='padding:8px 12px; background:var(--warn-soft); "
+            "border-radius:8px; font-size:0.82rem; color:var(--warn); margin-bottom:8px;'>"
+            "Clear all chat history?"
+            "</div>",
+            unsafe_allow_html=True,
+        )
         c1, c2 = st.sidebar.columns(2)
-        if c1.button("Yes, clear"):
+        if c1.button("Yes", use_container_width=True):
             st.session_state.messages = []
             st.session_state.last_decision = None
             st.session_state.reuse_counts = Counter()
@@ -656,11 +925,10 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
             st.session_state.pending_prompt = None
             st.session_state.show_context_analysis = False
             st.session_state.last_inferred_topic = None
-            # Fresh chat → fresh conv_id so XTrace starts a new Episode.
             import uuid as _uuid
             st.session_state.chat_session_id = f"chat_{_uuid.uuid4().hex[:12]}"
             st.rerun()
-        if c2.button("Cancel"):
+        if c2.button("Cancel", use_container_width=True):
             st.session_state.confirm_clear = False
             st.rerun()
 
@@ -673,30 +941,10 @@ def _render_left_sidebar(student_id_default: str = "demo-user"):
 
 
 def _render_right_pane(col, topic_id: str | None, student_id: str):
-    """Minimal right pane: gauge + progress + badges + toggle."""
+    """Compact right rail: concept progress, status badges, debug toggle."""
     d = st.session_state.last_decision
 
     with col:
-        # --- Token usage "gauge" (horizontal bar + label) ---
-        st.markdown("**Token usage**")
-        if d:
-            tokens_used = d["tokens_used"]
-            budget = d["budget"]
-            frac = min(tokens_used / max(budget, 1), 1.0)
-            st.progress(frac)
-            pct = int(frac * 100)
-            color = "#16a34a" if pct < 60 else ("#d97706" if pct < 85 else "#dc2626")
-            st.markdown(
-                f"<span style='color:{color}; font-size:0.85rem; font-family:Inter,sans-serif;'>"
-                f"{tokens_used:,} / {budget:,} tokens ({pct}%)</span>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.progress(0.0)
-            st.caption("Ask a question to see usage.")
-
-        st.divider()
-
         # --- Concept progress ---
         seen_ids = st.session_state.seen_concepts_by_topic.get(topic_id or "_global", set())
         n_seen = len(seen_ids)
@@ -710,15 +958,29 @@ def _render_right_pane(col, topic_id: str | None, student_id: str):
             finally:
                 conn.close()
 
-        st.markdown("**Concepts covered**")
+        st.markdown(
+            "<div class='lm-section-label'>Concepts covered</div>",
+            unsafe_allow_html=True,
+        )
         if n_total > 0:
             frac_c = min(n_seen / n_total, 1.0)
-            st.progress(frac_c)
-            st.caption(f"{n_seen} / {n_total} in {topic_id or 'session'}")
+            pct_c = int(frac_c * 100)
+            st.markdown(
+                f"<div style='font-size:1.3rem; font-weight:600; color:var(--text); margin-bottom:2px;'>"
+                f"{n_seen}<span style='font-size:0.8rem; color:var(--text-soft); font-weight:400;'> / {n_total}</span>"
+                f"</div>"
+                f"<div class='lm-meter'>"
+                f"<div class='lm-meter-fill lm-meter-fill--good' style='width:{pct_c}%'></div>"
+                f"</div>"
+                f"<div style='font-size:0.78rem; color:var(--text-soft);'>in {_topic_title(topic_id) if topic_id else 'session'}</div>",
+                unsafe_allow_html=True,
+            )
         else:
-            st.caption(f"{n_seen} touched this session")
-
-        st.divider()
+            st.markdown(
+                f"<div style='font-size:1.3rem; font-weight:600; color:var(--text);'>{n_seen}</div>"
+                f"<div style='font-size:0.78rem; color:var(--text-soft);'>touched this session</div>",
+                unsafe_allow_html=True,
+            )
 
         # --- Badges ---
         conn = _new_conn()
@@ -731,18 +993,21 @@ def _render_right_pane(col, topic_id: str | None, student_id: str):
 
         n_mastered = sum(1 for m in mastery if m.score >= 0.8)
         n_misc = len(misconceptions)
-        badge_html = (
-            f'<span class="badge">{n_mastered} mastered</span>'
-            f'<span class="badge badge-warn">{n_misc} misconception{"s" if n_misc != 1 else ""}</span>'
+        st.markdown(
+            "<div class='lm-section-label'>Status</div>"
+            f"<div style='display:flex; flex-direction:column; gap:6px;'>"
+            f"<span class='lm-chip lm-chip--success'><span class='lm-chip-dot'></span>{n_mastered} mastered</span>"
+            f"<span class='lm-chip lm-chip--danger'><span class='lm-chip-dot'></span>"
+            f"{n_misc} misconception{'s' if n_misc != 1 else ''}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
         )
-        st.markdown(badge_html, unsafe_allow_html=True)
 
-        st.divider()
-
-        # --- Show context analysis toggle ---
+        # --- Context analysis toggle ---
         if d:
+            st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
             toggle_label = "Hide context analysis" if st.session_state.show_context_analysis else "Show context analysis"
-            if st.button(toggle_label, key="toggle_context"):
+            if st.button(toggle_label, key="toggle_context", use_container_width=True):
                 st.session_state.show_context_analysis = not st.session_state.show_context_analysis
 
 
@@ -899,6 +1164,15 @@ def _record_misconception_to_db(
             evidence=original_question,
         )
         conn.commit()
+        # Mirror to XTrace so long-term memory captures the misconception too.
+        xtrace = _xtrace_client()
+        if xtrace is not None:
+            topic_label = _topic_title(topic_id) if topic_id else "(unknown topic)"
+            xtrace.ingest_fact(
+                student_id=student_id,
+                text=f"Misconception identified in {topic_label}: {confirmed_misconception}",
+                conv_id=st.session_state.get("chat_session_id"),
+            )
         return misconception_id
     except Exception as exc:
         st.warning(f"Could not persist misconception: {exc}")
@@ -1114,6 +1388,24 @@ def _render_diagnostic_flow(
                         diag["retest_answer"] = retest_ans.strip()
                         diag["retest_score"] = quiz_score.score
                         st.session_state.diagnostic[diag_key] = diag
+                        # Mirror retest outcome to XTrace.
+                        xtrace = _xtrace_client()
+                        if xtrace is not None:
+                            topic_label = _topic_title(topic_id) if topic_id else "(unspecified)"
+                            outcome = (
+                                "successfully corrected"
+                                if quiz_score.score >= DIAGNOSTIC_THRESHOLD
+                                else "still has the misconception"
+                            )
+                            xtrace.ingest_fact(
+                                student_id=student_id,
+                                text=(
+                                    f"After a misconception correction on {topic_label}, "
+                                    f"the student {outcome} "
+                                    f"(retest score {int(quiz_score.score*100)}%)."
+                                ),
+                                conv_id=st.session_state.get("chat_session_id"),
+                            )
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Re-test grading failed: {exc}")
@@ -1280,6 +1572,27 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
             finally:
                 conn.close()
 
+            # Mirror quiz outcome to XTrace as a learning signal.
+            xtrace = _xtrace_client()
+            if xtrace is not None:
+                outcome = (
+                    "demonstrated solid understanding"
+                    if quiz_score.score >= 0.7
+                    else "got partial credit"
+                    if quiz_score.score >= 0.4
+                    else "struggled"
+                )
+                topic_label = _topic_title(topic_id) if topic_id else "(unspecified topic)"
+                xtrace.ingest_fact(
+                    student_id=student_id,
+                    text=(
+                        f"On a quiz about {topic_label}, the student {outcome} "
+                        f"(score {int(quiz_score.score*100)}%). "
+                        f"Question: {state['question'][:160]}"
+                    ),
+                    conv_id=st.session_state.get("chat_session_id"),
+                )
+
             st.rerun()
 
 
@@ -1290,8 +1603,19 @@ def _render_quiz_for_message(msg_idx: int, topic_id: str | None, student_id: str
 
 def _handle_turn(
     prompt: str, student_id: str, topic_id: str | None, budget: int
-) -> str:
-    """Run one tutor turn; update session_state.last_decision and reuse_counts."""
+):
+    """Run one tutor turn as a generator of text deltas.
+
+    Phase 1 (before first yield): topic inference, candidate selection, prompt
+    building. The Streamlit caller can show a 'Selecting context...' placeholder
+    while this is running.
+
+    Phase 2: yields text chunks streamed from the LLM. The caller appends them
+    to a placeholder for a typing-style effect.
+
+    Phase 3 (after stream loop exits): episodic logging, XTrace ingest, and
+    last_decision update. Runs once the generator is fully consumed.
+    """
     llm, embedder = _llm_and_embedder()
     engine = RoutingEngine()
     settings = _settings()
@@ -1353,18 +1677,7 @@ def _handle_turn(
         recent = episodic.recent(student_id, limit=10)
         recent_ids = {e.id for e in recent if e.id}
 
-        tutor = TutorAgent(llm=llm, engine=engine, embedder=embedder, logger=logger)
-        response = tutor.answer(
-            student_id=student_id,
-            question=prompt,
-            candidates=candidates,
-            active_misconceptions=misconceptions,
-            prerequisites=prereq_titles,
-            recent_ids=recent_ids,
-            reuse_counts=dict(st.session_state.reuse_counts),
-            budget=budget,
-        )
-
+        # Build the prompt using the routing engine (same as TutorAgent.answer).
         task_emb = embedder.embed_one(prompt)
         decision = engine.route(
             candidates=candidates,
@@ -1375,15 +1688,49 @@ def _handle_turn(
             reuse_counts=dict(st.session_state.reuse_counts),
             budget=budget,
         )
+        logger.log({
+            "event": "routing_decision",
+            "agent": "tutor",
+            "student_id": student_id,
+            "task": prompt,
+            "selected_ids": [it.id for it in decision.selected],
+            "dropped_ids": [it.id for it in decision.dropped],
+            "tokens_used": decision.tokens_used,
+            "budget": decision.budget,
+        })
 
-        for it in response.selected_items:
+        context_block = "\n\n".join(
+            f"[{it.id}] {it.title}\n{it.body}" for it in decision.selected
+        )
+        user_prompt = (
+            f"CONTEXT ITEMS:\n{context_block}\n\nSTUDENT QUESTION:\n{prompt}"
+        )
+
+        # Phase 2: stream the LLM response.
+        chunks: list[str] = []
+        for delta in llm.stream(
+            system=TUTOR_SYSTEM, user=user_prompt, max_tokens=1024
+        ):
+            chunks.append(delta)
+            yield delta
+        full_text = "".join(chunks)
+
+        # Phase 3: post-processing. Runs after the generator is fully consumed.
+        logger.log({
+            "event": "tutor_reply",
+            "agent": "tutor",
+            "student_id": student_id,
+            "text": full_text,
+        })
+
+        for it in decision.selected:
             st.session_state.reuse_counts[it.id] += 1
 
         topic_key = topic_id or "_global"
         if topic_key not in st.session_state.seen_concepts_by_topic:
             st.session_state.seen_concepts_by_topic[topic_key] = set()
         for it in decision.selected:
-            if getattr(it, "artifact_type", None) == "concept":
+            if getattr(it.artifact_type, "value", None) == "concept":
                 st.session_state.seen_concepts_by_topic[topic_key].add(it.id)
 
         episodic.append(
@@ -1395,16 +1742,15 @@ def _handle_turn(
             student_id=student_id,
             event_type="tutor_reply",
             payload={
-                "text": response.text,
-                "selected_ids": [it.id for it in response.selected_items],
-                "tokens_used": response.tokens_used,
+                "text": full_text,
+                "selected_ids": [it.id for it in decision.selected],
+                "tokens_used": decision.tokens_used,
             },
         )
         conn.commit()
 
-        # Long-horizon memory write: ingest the user's turn under the current
-        # chat's stable conv_id so XTrace groups every turn of this chat into a
-        # single Episode automatically. No explicit "end session" needed.
+        # Long-horizon memory write: ingest the user's turn under this chat's
+        # stable conv_id so XTrace groups all turns into one Episode.
         xtrace = _xtrace_client()
         if xtrace is not None:
             xtrace.ingest_fact(
@@ -1447,8 +1793,6 @@ def _handle_turn(
             "tokens_used": decision.tokens_used,
         }
 
-        return response.text
-
     finally:
         conn.close()
 
@@ -1458,160 +1802,558 @@ def _handle_turn(
 # ---------------------------------------------------------------------------
 
 
+def _topic_title(topic_id: str | None) -> str:
+    """Human-readable title for a topic id. Falls back to title-cased id."""
+    if not topic_id:
+        return "Auto"
+    for t in _topics():
+        if t.id == topic_id:
+            return t.title
+    return topic_id.replace("_", " ").title()
+
+
+def _format_topic_option(opt: str) -> str:
+    """Selectbox format_func: titles for real topics, friendly label for auto."""
+    if opt == "(auto)":
+        return "Auto-detect topic"
+    return _topic_title(opt)
+
+
+def _topic_status_chip_html() -> str:
+    """Small colored pill summarizing current topic / inference state.
+
+    Green when a manual topic is pinned, blue for auto-detected, amber for
+    inferred-with-medium-confidence, grey when the model can't decide.
+    """
+    if st.session_state.topic_choice != "(auto)":
+        title = _topic_title(st.session_state.topic_choice)
+        return (
+            f"<span style='display:inline-block; padding:4px 10px; border-radius:999px; "
+            f"background:#e7f0ff; color:#1f4ec7; font-size:0.85rem; font-weight:500;'>"
+            f"Focused · {title}</span>"
+        )
+
+    inferred = st.session_state.get("last_inferred_topic")
+    if not inferred or not inferred.get("topic_id"):
+        return (
+            "<span style='display:inline-block; padding:4px 10px; border-radius:999px; "
+            "background:#f1f1f4; color:#666; font-size:0.85rem;'>"
+            "Topic will be inferred from your message</span>"
+        )
+    decision = inferred.get("decision", "ask")
+    title = _topic_title(inferred["topic_id"])
+    conf = inferred["confidence"]
+    if decision == "auto":
+        bg, fg, label = "#e6f7ee", "#1a7f4a", f"Auto · {title} · {conf:.0%}"
+    elif decision == "inferred":
+        bg, fg, label = "#fff5e0", "#a05a00", f"Inferred · {title} · {conf:.0%}"
+    else:
+        bg, fg, label = "#f1f1f4", "#666", f"Uncertain · {conf:.0%} — I'll ask"
+    return (
+        f"<span style='display:inline-block; padding:4px 10px; border-radius:999px; "
+        f"background:{bg}; color:{fg}; font-size:0.85rem; font-weight:500;'>{label}</span>"
+    )
+
+
 def _render_topic_header(*, expanded: bool) -> str | None:
-    """In-content topic chooser. Lives above the chat; visible on every turn.
+    """In-content topic chooser; lives above the chat on every turn.
 
-    When `expanded=True` (no messages yet), renders as a full welcome card with
-    explanatory text + the picker + starter prompts. When False, collapses to a
-    slim bar showing the current/inferred topic with a 'change' control.
-
-    Writes `st.session_state.topic_choice` and returns the resolved topic_id
-    (None means auto-detect at turn time).
+    Two layouts: expanded welcome card (no messages yet) and slim bar
+    (during conversation). Writes ``st.session_state.topic_choice`` and
+    returns the resolved topic_id (None == auto-detect at turn time).
     """
     topics = _topics()
     topic_options = ["(auto)"] + [t.id for t in topics]
 
-    inferred = st.session_state.get("last_inferred_topic")
-    inferred_label = ""
-    if inferred and inferred.get("topic_id"):
-        dec = inferred.get("decision", "ask")
-        verb = "auto" if dec == "auto" else "inferred"
-        inferred_label = f"{verb} → **{inferred['topic_id']}** (conf {inferred['confidence']:.2f})"
-    elif inferred and inferred.get("decision") == "ask":
-        inferred_label = f"no confident topic yet (conf {inferred.get('confidence', 0.0):.2f}) — tutor will ask"
-
     if expanded:
         with st.container(border=True):
             st.markdown(
-                "<h2 style='margin:0 0 8px 0; color:#1f2235;'>Welcome — I'm your ML systems tutor.</h2>"
-                "<p style='color:#555; font-size:1.02rem; margin:0 0 16px 0;'>"
-                "Pick a topic below, then ask anything. Leave it on <strong>(auto)</strong> "
-                "and I'll figure out the topic from what you ask. "
-                "I'll give you a concise answer, a diagram when helpful, and always invite you to go deeper."
-                "</p>",
+                "<div style='padding:8px 4px 0 4px;'>"
+                "<h2 style='margin:0 0 10px 0; color:var(--text); font-weight:600; font-size:1.6rem;'>"
+                "Welcome — I'm Memex."
+                "</h2>"
+                "<p style='color:var(--text-muted); font-size:1.0rem; margin:0 0 18px 0; line-height:1.55;'>"
+                "Your ML systems tutor. Pick a topic, or leave it on <strong>(auto)</strong> "
+                "and I'll figure it out from what you ask. I keep answers concise, add a "
+                "diagram when it helps, and remember what you've worked on across sessions."
+                "</p>"
+                "</div>",
                 unsafe_allow_html=True,
             )
-            col_select, col_status = st.columns([2, 3])
-            with col_select:
-                st.selectbox(
-                    "Topic",
-                    topic_options,
-                    key="topic_choice",
-                    label_visibility="collapsed",
-                )
-            with col_status:
-                if st.session_state.topic_choice == "(auto)":
-                    if inferred_label:
-                        st.markdown(f"<div style='padding-top:6px; color:#444;'>{inferred_label}</div>", unsafe_allow_html=True)
-                    else:
-                        st.markdown(
-                            "<div style='padding-top:6px; color:#888;'>Topic will be inferred from your first message.</div>",
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    st.markdown(
-                        f"<div style='padding-top:6px; color:#444;'>Focused on <strong>{st.session_state.topic_choice}</strong></div>",
-                        unsafe_allow_html=True,
-                    )
+            st.selectbox(
+                "Topic",
+                topic_options,
+                key="topic_choice",
+                label_visibility="collapsed",
+                format_func=_format_topic_option,
+            )
+            st.markdown(_topic_status_chip_html(), unsafe_allow_html=True)
 
-        # Starter prompts below the card.
         topic_id_for_starters = (
             None if st.session_state.topic_choice == "(auto)" else st.session_state.topic_choice
         )
         starters = _starter_prompts_for(topic_id_for_starters)
         if starters:
-            st.markdown("**Jump in with:**")
+            st.markdown(
+                "<div class='lm-section-label' style='margin:18px 0 8px 0;'>Jump in with</div>",
+                unsafe_allow_html=True,
+            )
             cols = st.columns(len(starters))
             for i, (col, prompt) in enumerate(zip(cols, starters)):
                 if col.button(prompt, key=f"starter_{i}"):
                     st.session_state.pending_prompt = prompt
                     st.rerun()
     else:
-        # Slim, always-visible header during conversation.
         with st.container(border=True):
-            col_select, col_status = st.columns([1, 2])
+            col_select, col_chip = st.columns([1, 2], vertical_alignment="center")
             with col_select:
                 st.selectbox(
                     "Topic",
                     topic_options,
                     key="topic_choice",
                     label_visibility="collapsed",
+                    format_func=_format_topic_option,
                 )
-            with col_status:
-                if st.session_state.topic_choice == "(auto)":
-                    label = inferred_label or "Topic will be inferred per turn."
-                    st.markdown(
-                        f"<div style='padding-top:6px; color:#555;'>{label}</div>",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        f"<div style='padding-top:6px; color:#555;'>Focused on <strong>{st.session_state.topic_choice}</strong></div>",
-                        unsafe_allow_html=True,
-                    )
+            with col_chip:
+                st.markdown(_topic_status_chip_html(), unsafe_allow_html=True)
 
     return None if st.session_state.topic_choice == "(auto)" else st.session_state.topic_choice
 
 
-def _render_memory_tab(student_id: str):
-    """Full-width 'What you've worked on' inspector for the Memory tab."""
-    xtrace = _xtrace_client()
-    if xtrace is None:
-        st.info(
-            "Long-term memory is disabled. Set `XTRACE_API_KEY` and `XTRACE_ORG_ID` "
-            "in `.env`, then restart Streamlit to enable saving sessions across time."
-        )
-        return
+def _compute_topic_mastery(student_id: str) -> list[dict]:
+    """Aggregate per-topic mastery from the Postgres mastery + misconceptions tables.
 
+    For each topic we look up the topic's concept-type semantic items, then count
+    how many of those concepts have a mastery entry for this student and what the
+    average score is. Used to power the Profile tab.
+    """
+    out: list[dict] = []
+    topics = _topics()
+    conn = _new_conn()
     try:
-        items = xtrace.list_memories(student_id=student_id, limit=100)
-    except Exception as exc:
-        st.error(f"Could not load long-term memory: {exc}")
-        return
+        semantic = SemanticStore(conn)
+        student = StudentStore(conn)
+        mastery_by_id = {m.concept_id: m for m in student.mastery_for(student_id)}
+        misc_list = student.active_misconceptions(student_id)
+        misc_by_concept: dict[str, int] = {}
+        for m in misc_list:
+            cid = m.get("concept_id")
+            if cid:
+                misc_by_concept[cid] = misc_by_concept.get(cid, 0) + 1
+        for t in topics:
+            try:
+                items = semantic.by_topic(t.id)
+            except Exception:
+                items = []
+            concepts = [
+                it
+                for it in items
+                if (getattr(it.artifact_type, "value", str(it.artifact_type or "")).lower()
+                    == "concept")
+            ]
+            scores: list[float] = []
+            n_assessed = 0
+            n_misc = 0
+            for c in concepts:
+                if c.id in mastery_by_id:
+                    scores.append(mastery_by_id[c.id].score)
+                    n_assessed += 1
+                if c.id in misc_by_concept:
+                    n_misc += misc_by_concept[c.id]
+            mean = sum(scores) / len(scores) if scores else None
+            out.append(
+                {
+                    "topic_id": t.id,
+                    "title": t.title,
+                    "area": t.area,
+                    "mean_score": mean,
+                    "n_assessed": n_assessed,
+                    "n_concepts": len(concepts),
+                    "n_misc": n_misc,
+                }
+            )
+    finally:
+        conn.close()
+    return out
 
-    episodes = [it for it in items if it.kind == "episode"]
-    facts = [it for it in items if it.kind == "fact"]
 
+def _compute_recommendations(topic_stats: list[dict]) -> list[dict]:
+    """Generate 3-5 'work on this next' recommendations.
+
+    Priorities, in order:
+      1. Reinforce weak topics — anything assessed below 0.5.
+      2. Unlock-ready topics — all prerequisites at >=0.7 mean mastery, but
+         the topic itself has no mastery yet.
+      3. Quick wins — small topics (few concepts) with zero mastery.
+
+    Each recommendation has: topic_id, title, reason, kind.
+    """
+    by_id = {t["topic_id"]: t for t in topic_stats}
+    topics_cfg = {t.id: t for t in _topics()}
+    recs: list[dict] = []
+
+    # 1. Weak topics (reinforce).
+    weak = sorted(
+        [t for t in topic_stats if t["mean_score"] is not None and t["mean_score"] < 0.5],
+        key=lambda t: t["mean_score"],
+    )
+    for t in weak[:2]:
+        recs.append(
+            {
+                "topic_id": t["topic_id"],
+                "title": t["title"],
+                "kind": "reinforce",
+                "reason": (
+                    f"Current mastery is {int(t['mean_score']*100)}% — a few more questions "
+                    "here will lock it in."
+                ),
+            }
+        )
+
+    # 2. Unlock-ready topics (prerequisites mastered, this topic untouched).
+    unlock_ready: list[dict] = []
+    for t in topic_stats:
+        if t["n_assessed"] > 0 or t["n_concepts"] == 0:
+            continue
+        prereqs = topics_cfg.get(t["topic_id"]).prerequisites if topics_cfg.get(t["topic_id"]) else []
+        if not prereqs:
+            continue
+        prereq_scores = [
+            by_id[p]["mean_score"]
+            for p in prereqs
+            if p in by_id and by_id[p]["mean_score"] is not None
+        ]
+        if prereq_scores and all(s >= 0.7 for s in prereq_scores):
+            unlock_ready.append(
+                {
+                    "topic_id": t["topic_id"],
+                    "title": t["title"],
+                    "kind": "unlocked",
+                    "reason": (
+                        "Prerequisites are solid (≥70%). You're ready to move on to this."
+                    ),
+                }
+            )
+    for t in unlock_ready[:2]:
+        recs.append(t)
+
+    # 3. Quick wins — small topics, no progress, no prereqs (or shallow ones).
+    if len(recs) < 3:
+        unstarted_small = sorted(
+            [
+                t
+                for t in topic_stats
+                if t["n_assessed"] == 0 and 0 < t["n_concepts"] <= 5
+            ],
+            key=lambda t: t["n_concepts"],
+        )
+        for t in unstarted_small:
+            if any(r["topic_id"] == t["topic_id"] for r in recs):
+                continue
+            recs.append(
+                {
+                    "topic_id": t["topic_id"],
+                    "title": t["title"],
+                    "kind": "quick_win",
+                    "reason": (
+                        f"Small topic ({t['n_concepts']} concepts) — a great way to "
+                        "get a quick win."
+                    ),
+                }
+            )
+            if len(recs) >= 4:
+                break
+
+    return recs[:4]
+
+
+def _mastery_band(score: float | None) -> str:
+    """Return a CSS-class suffix (good/mid/low) for a mastery score."""
+    if score is None:
+        return "neutral"
+    if score >= 0.7:
+        return "good"
+    if score >= 0.4:
+        return "mid"
+    return "low"
+
+
+def _render_profile_tab(student_id: str):
+    """Digital-student view: identity, per-topic mastery, strengths/weaknesses,
+    active misconceptions, and long-term memory evidence from XTrace."""
+
+    # --- Pull data ---
+    topic_stats = _compute_topic_mastery(student_id)
+    conn = _new_conn()
+    try:
+        student_store = StudentStore(conn)
+        all_mastery = student_store.mastery_for(student_id)
+        misconceptions = student_store.active_misconceptions(student_id)
+    finally:
+        conn.close()
+
+    xtrace = _xtrace_client()
+    memory_items = []
+    if xtrace is not None:
+        try:
+            memory_items = xtrace.list_memories(student_id=student_id, limit=100)
+        except Exception:
+            memory_items = []
+
+    episodes = [it for it in memory_items if it.kind == "episode"]
+    facts = [it for it in memory_items if it.kind == "fact"]
+
+    n_topics_touched = sum(1 for t in topic_stats if t["n_assessed"] > 0)
+    n_mastered_concepts = sum(1 for m in all_mastery if m.score >= 0.8)
+    n_misc = len(misconceptions)
+
+    # --- Identity hero ---
     st.markdown(
-        "<h2 style='margin:0 0 4px 0;'>What you've worked on</h2>"
-        "<p style='color:#777; margin:0 0 20px 0;'>Long-term memory across every session you've had with this tutor.</p>",
+        f"<div style='display:flex; align-items:center; gap:16px; margin:0 0 18px 0;'>"
+        f"<div style='width:48px; height:48px; border-radius:14px; "
+        f"background:linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%); "
+        f"display:flex; align-items:center; justify-content:center; color:#fff; "
+        f"font-weight:600; font-size:1.2rem; box-shadow:var(--shadow-md);'>"
+        f"{(student_id or '?')[0].upper()}</div>"
+        f"<div>"
+        f"<div style='font-size:1.4rem; font-weight:600; color:var(--text); line-height:1.1;'>"
+        f"{student_id}</div>"
+        f"<div style='font-size:0.9rem; color:var(--text-muted); margin-top:2px;'>"
+        f"Digital learner profile · powered by Memex + long-term memory</div>"
+        f"</div>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Sessions saved", len(episodes))
-    c2.metric("Facts captured", len(facts))
-    c3.metric("Total memories", len(items))
+    # --- Top-line metrics ---
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Topics touched", f"{n_topics_touched} / {len(topic_stats)}")
+    c2.metric("Concepts mastered", n_mastered_concepts)
+    c3.metric("Misconceptions", n_misc)
+    c4.metric("Sessions saved", len(episodes))
 
-    st.divider()
+    # --- Strengths / Weaknesses ---
+    assessed = [t for t in topic_stats if t["mean_score"] is not None]
+    if assessed:
+        sorted_by_mastery = sorted(assessed, key=lambda x: x["mean_score"], reverse=True)
+        strengths = [t for t in sorted_by_mastery if t["mean_score"] >= 0.6][:3]
+        weaknesses = sorted([t for t in assessed if t["mean_score"] < 0.6], key=lambda x: x["mean_score"])[:3]
 
-    if not items:
+        col_s, col_w = st.columns(2)
+        with col_s:
+            st.markdown("<div class='lm-section-label'>Strengths</div>", unsafe_allow_html=True)
+            if strengths:
+                chips = "".join(
+                    f"<span class='lm-chip lm-chip--success'>"
+                    f"<span class='lm-chip-dot'></span>{t['title']} · {int(t['mean_score']*100)}%"
+                    f"</span>"
+                    for t in strengths
+                )
+                st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    "<div style='color:var(--text-soft); font-size:0.9rem;'>"
+                    "No topics above 60% yet — keep going.</div>",
+                    unsafe_allow_html=True,
+                )
+        with col_w:
+            st.markdown("<div class='lm-section-label'>Areas to focus on</div>", unsafe_allow_html=True)
+            if weaknesses:
+                chips = "".join(
+                    f"<span class='lm-chip lm-chip--warn'>"
+                    f"<span class='lm-chip-dot'></span>{t['title']} · {int(t['mean_score']*100)}%"
+                    f"</span>"
+                    for t in weaknesses
+                )
+                st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    "<div style='color:var(--text-soft); font-size:0.9rem;'>"
+                    "Everything assessed so far is solid.</div>",
+                    unsafe_allow_html=True,
+                )
+
+    # --- Recommendations ---
+    recommendations = _compute_recommendations(topic_stats)
+    if recommendations:
         st.markdown(
-            "<div style='padding:32px; text-align:center; color:#888;'>"
-            "Nothing here yet. Have a conversation in the Chat tab, then click "
-            "<strong>End session</strong> in the sidebar to save what you worked on."
+            "<div class='lm-section-label'>Recommended for you</div>",
+            unsafe_allow_html=True,
+        )
+        kind_meta = {
+            "reinforce": ("Reinforce", "#fff5e0", "#a05a00"),
+            "unlocked":  ("Unlocked", "#e6f7ee", "#1a7f4a"),
+            "quick_win": ("Quick win", "#eef0ff", "#3730a3"),
+        }
+        rec_cols = st.columns(min(len(recommendations), 4))
+        for i, rec in enumerate(recommendations):
+            label, bg, fg = kind_meta.get(rec["kind"], ("Suggested", "#eef0ff", "#3730a3"))
+            with rec_cols[i]:
+                with st.container(border=True):
+                    st.markdown(
+                        f"<div style='display:inline-block; padding:3px 9px; border-radius:999px; "
+                        f"background:{bg}; color:{fg}; font-size:0.72rem; font-weight:600; "
+                        f"letter-spacing:0.04em; text-transform:uppercase; margin-bottom:8px;'>"
+                        f"{label}</div>"
+                        f"<div style='font-weight:600; color:var(--text); font-size:0.95rem; "
+                        f"margin-bottom:6px; line-height:1.35;'>{rec['title']}</div>"
+                        f"<div style='font-size:0.85rem; color:var(--text-muted); line-height:1.5;'>"
+                        f"{rec['reason']}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        "Study this →",
+                        key=f"rec_{rec['topic_id']}_{i}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.topic_choice = rec["topic_id"]
+                        st.session_state.pending_prompt = (
+                            f"Give me a quick intro to {rec['title']}."
+                        )
+                        st.session_state.active_tab = "Chat"
+                        st.rerun()
+
+    # --- Active misconceptions ---
+    if misconceptions:
+        st.markdown(
+            "<div class='lm-section-label'>Active misconceptions</div>",
+            unsafe_allow_html=True,
+        )
+        with st.container(border=True):
+            for m in misconceptions[:8]:
+                desc = (m.get("description") or "").strip()
+                if not desc:
+                    continue
+                st.markdown(
+                    f"<div style='display:flex; gap:10px; align-items:flex-start; "
+                    f"padding:8px 0; border-bottom:1px solid var(--border-soft);'>"
+                    f"<span style='flex-shrink:0; width:8px; height:8px; border-radius:50%; "
+                    f"background:var(--danger); margin-top:7px;'></span>"
+                    f"<div style='color:var(--text); font-size:0.92rem; line-height:1.5;'>{desc}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+    # --- Per-topic mastery breakdown ---
+    st.markdown(
+        "<div class='lm-section-label'>Topic-by-topic mastery</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Sort: assessed-and-strong first, then assessed-and-weak, then unstarted.
+    def sort_key(t: dict) -> tuple:
+        if t["mean_score"] is None:
+            return (1, 0.0)
+        return (0, -t["mean_score"])
+
+    sorted_topics = sorted(topic_stats, key=sort_key)
+
+    if not any(t["n_concepts"] > 0 for t in sorted_topics):
+        st.markdown(
+            "<div style='color:var(--text-soft); padding:12px 0;'>"
+            "No semantic items found — run the ingestion script to populate topics.</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        for t in sorted_topics:
+            if t["n_concepts"] == 0:
+                continue  # Skip topics with no concepts in the DB.
+            score = t["mean_score"]
+            band = _mastery_band(score)
+            fill_class = {
+                "good": "lm-meter-fill--good",
+                "mid": "lm-meter-fill--mid",
+                "low": "lm-meter-fill--low",
+                "neutral": "lm-meter-fill--good",
+            }[band]
+            pct = int((score or 0) * 100)
+            score_label = (
+                f"{pct}%"
+                if score is not None
+                else "<span style='color:var(--text-soft);'>not started</span>"
+            )
+            assessed_label = (
+                f"{t['n_assessed']} / {t['n_concepts']} concepts"
+                if t["n_assessed"]
+                else f"0 / {t['n_concepts']} concepts"
+            )
+            misc_badge = (
+                f"<span class='lm-chip lm-chip--danger' style='margin-left:8px;'>"
+                f"<span class='lm-chip-dot'></span>{t['n_misc']} misc</span>"
+                if t["n_misc"]
+                else ""
+            )
+            st.markdown(
+                f"<div style='padding:10px 0; border-bottom:1px solid var(--border-soft);'>"
+                f"<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;'>"
+                f"<div style='font-weight:500; color:var(--text); font-size:0.95rem;'>{t['title']}{misc_badge}</div>"
+                f"<div style='font-size:0.85rem; color:var(--text-muted);'>{score_label}</div>"
+                f"</div>"
+                + (
+                    f"<div class='lm-meter'>"
+                    f"<div class='lm-meter-fill {fill_class}' style='width:{pct}%'></div>"
+                    f"</div>"
+                    if score is not None
+                    else "<div class='lm-meter'><div class='lm-meter-fill' style='width:0%'></div></div>"
+                )
+                + f"<div style='font-size:0.78rem; color:var(--text-soft); margin-top:2px;'>{assessed_label}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # --- Long-term memory evidence (XTrace) ---
+    if xtrace is None:
+        st.markdown(
+            "<div style='margin-top:24px; padding:14px 18px; background:var(--surface-2); "
+            "border-radius:var(--radius); font-size:0.88rem; color:var(--text-muted);'>"
+            "Set <code>XTRACE_API_KEY</code> and <code>XTRACE_ORG_ID</code> to enable "
+            "long-term memory and see session history here."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown(
+        "<div class='lm-section-label'>Recent activity</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not memory_items:
+        st.markdown(
+            "<div style='margin:8px 0; padding:32px 20px; text-align:center; "
+            "background:var(--surface); border:1px dashed var(--border); "
+            "border-radius:var(--radius); color:var(--text-muted);'>"
+            "<div style='font-size:1.6rem; margin-bottom:6px;'>🧠</div>"
+            "<div style='font-size:0.95rem; color:var(--text); font-weight:500;'>"
+            "No long-term memory yet.</div>"
+            "<div style='font-size:0.88rem; margin-top:2px;'>"
+            "Chat in the <strong>Chat</strong> tab and your sessions will land here.</div>"
             "</div>",
             unsafe_allow_html=True,
         )
         return
 
     if episodes:
-        st.markdown("### Past sessions")
-        for ep in episodes:
+        for i, ep in enumerate(reversed(episodes), 1):
             with st.container(border=True):
                 st.markdown(
-                    f"<div style='color:#888; font-size:0.85rem; margin-bottom:6px;'>"
-                    f"Session memory · sim {ep.similarity:.2f}"
-                    f"</div>",
+                    f"<div style='font-weight:600; color:var(--text); font-size:0.95rem; "
+                    f"margin-bottom:10px;'>Session #{len(episodes) - i + 1}</div>"
+                    f"<div style='color:var(--text); line-height:1.6; font-size:0.95rem;'>{ep.text}</div>",
                     unsafe_allow_html=True,
                 )
-                st.markdown(ep.text)
 
     if facts:
-        st.markdown("### Things the tutor remembers about you")
+        st.markdown(
+            "<div class='lm-section-label'>Things the tutor remembers about you</div>",
+            unsafe_allow_html=True,
+        )
         for f in facts:
             with st.container(border=True):
-                st.markdown(f.text)
+                st.markdown(
+                    f"<div style='color:var(--text); line-height:1.55; font-size:0.95rem;'>{f.text}</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1677,12 +2419,38 @@ def main():
     # Left sidebar (sidebar no longer owns topic selection).
     student_id, topic_id, budget = _render_left_sidebar()
 
-    chat_tab, memory_tab = st.tabs(["Chat", "Memory"])
+    # Session-state driven tab nav (st.tabs has no programmatic switch API).
+    if "active_tab" not in st.session_state:
+        st.session_state.active_tab = "Chat"
 
-    with memory_tab:
-        _render_memory_tab(student_id)
+    nav_chat, nav_profile, _nav_spacer = st.columns([1, 1, 6])
+    active = st.session_state.active_tab
+    if nav_chat.button(
+        "Chat",
+        key="nav_chat",
+        use_container_width=True,
+        type="primary" if active == "Chat" else "secondary",
+    ):
+        st.session_state.active_tab = "Chat"
+        st.rerun()
+    if nav_profile.button(
+        "Profile",
+        key="nav_profile",
+        use_container_width=True,
+        type="primary" if active == "Profile" else "secondary",
+    ):
+        st.session_state.active_tab = "Profile"
+        st.rerun()
+    st.markdown(
+        "<div style='border-bottom:1px solid var(--border-soft); margin:6px 0 18px 0;'></div>",
+        unsafe_allow_html=True,
+    )
 
-    with chat_tab:
+    if st.session_state.active_tab == "Profile":
+        _render_profile_tab(student_id)
+        return
+
+    if True:
         # In-content topic chooser. Expanded layout when chat is empty,
         # slim layout once a conversation is going.
         topic_id = _render_topic_header(expanded=not st.session_state.messages)
@@ -1723,14 +2491,21 @@ def main():
                     st.markdown(prompt)
 
                 with st.chat_message("assistant"):
-                    with st.spinner("Selecting context and generating response..."):
-                        reply = _handle_turn(prompt, student_id, topic_id, budget)
+                    placeholder = st.empty()
+                    placeholder.markdown("_Selecting context…_")
+                    reply = ""
+                    for delta in _handle_turn(prompt, student_id, topic_id, budget):
+                        reply += delta
+                        # Show streaming text with a typing cursor.
+                        placeholder.markdown(reply + "▌")
+                    # Generator exhausted → post-processing has run, last_decision is set.
                     selected_items = (
                         st.session_state.last_decision.get("selected", [])
                         if st.session_state.last_decision
                         else []
                     )
                     rendered_reply = _render_citations(reply, selected_items)
+                    placeholder.empty()
                     _render_with_mermaid(rendered_reply)
                     new_msg_idx = len(st.session_state.messages)
                     _render_quiz_for_message(new_msg_idx, topic_id, student_id)

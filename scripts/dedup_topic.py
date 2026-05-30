@@ -8,7 +8,6 @@ Run with --dry-run first to see what would be deleted.
 
 import math
 from collections import defaultdict
-from pathlib import Path
 import typer
 
 from learning_memory_os.config import get_settings
@@ -113,7 +112,6 @@ def main(
                 continue
             # Keep the one with the longest body; ties broken by earliest id
             members.sort(key=lambda m: (-m["len"], m["id"]))
-            keeper = members[0]
             kept_count += 1
             for m in members[1:]:
                 to_delete.append(m)

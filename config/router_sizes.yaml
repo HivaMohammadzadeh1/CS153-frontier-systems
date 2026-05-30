@@ -4,27 +4,27 @@ sizes:
     hf_model: Qwen/Qwen2.5-0.5B-Instruct
     lora_r: 16
     lora_alpha: 32
-    batch_size: 8
-    max_seq_len: 4096
+    batch_size: 4
+    max_seq_len: 2048
     use_4bit_base: false
   - id: qwen2_5_1_5b
     hf_model: Qwen/Qwen2.5-1.5B-Instruct
     lora_r: 16
     lora_alpha: 32
-    batch_size: 4
-    max_seq_len: 4096
+    batch_size: 2
+    max_seq_len: 2048
     use_4bit_base: false
   - id: qwen2_5_3b
     hf_model: Qwen/Qwen2.5-3B-Instruct
     lora_r: 16
     lora_alpha: 32
-    batch_size: 2
-    max_seq_len: 4096
+    batch_size: 1
+    max_seq_len: 2048
     use_4bit_base: false
   - id: qwen2_5_7b
     hf_model: Qwen/Qwen2.5-7B-Instruct
     lora_r: 16
     lora_alpha: 32
     batch_size: 1
-    max_seq_len: 4096
+    max_seq_len: 2048
     use_4bit_base: true

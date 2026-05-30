@@ -8,9 +8,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-# Project root: two levels up from src/learning_memory_os/api.py
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +27,9 @@ from learning_memory_os.agents.tutor import TutorAgent
 from learning_memory_os.logging_utils.interactions import InteractionLogger
 from learning_memory_os.ingestion.topic_loader import load_topics, resolve_prerequisite_titles
 from learning_memory_os.eval.quiz import QuizQuestion, score_answer
+
+# Project root: two levels up from src/learning_memory_os/api.py
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 # ---- Schemas for tool-use ----
@@ -84,6 +85,10 @@ def _llm_and_embedder():
 
 _TOPICS = load_topics(_PROJECT_ROOT / "config" / "topics.yaml")
 
+_AREA_NAMES: dict[str, str] = (
+    yaml.safe_load((_PROJECT_ROOT / "config" / "topics.yaml").read_text()) or {}
+).get("areas", {})
+
 
 # ---- Request/response models ----
 
@@ -132,7 +137,11 @@ def health():
 
 @app.get("/api/topics")
 def list_topics():
-    return [{"id": t.id, "title": t.title, "area": t.area} for t in _TOPICS]
+    return [
+        {"id": t.id, "title": t.title, "area": t.area,
+         "area_title": _AREA_NAMES.get(t.area, "")}
+        for t in _TOPICS
+    ]
 
 
 class StoredMessage(BaseModel):
@@ -209,27 +218,37 @@ def student_state(student_id: str):
         conn.close()
 
 
-def _substitute_citations(reply_text: str, decision_selected) -> tuple[str, list[ChatReference]]:
+def _substitute_citations(reply_text: str, id_to_title: dict[str, str]) -> tuple[str, list[ChatReference]]:
     """Find [a1b2c3d4] short ids in reply_text, replace with [1] [2] [3] in order.
-    Return the rewritten text + ordered references list."""
+
+    Only ids that resolve to a real title (via ``id_to_title``) are numbered and
+    surfaced as references; markers that can't be resolved (e.g. a hallucinated
+    id) are stripped so the student never sees a raw hex id as a "source".
+    """
     pattern = re.compile(r"\[([a-f0-9]{8})\]")
+
     ids_in_order: list[str] = []
     seen: set[str] = set()
     for match in pattern.finditer(reply_text):
         cid = match.group(1)
-        if cid not in seen:
-            seen.add(cid)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        if cid in id_to_title:           # only number resolvable sources
             ids_in_order.append(cid)
-    # Map id -> number
-    id_to_n = {cid: i + 1 for i, cid in enumerate(ids_in_order)}
-    new_text = pattern.sub(lambda m: f"[{id_to_n[m.group(1)]}]", reply_text)
 
-    # Build references list using titles from selected items
-    sel_by_id = {it.id: it for it in decision_selected}
-    refs: list[ChatReference] = []
-    for cid in ids_in_order:
-        title = sel_by_id[cid].title if cid in sel_by_id else cid
-        refs.append(ChatReference(n=id_to_n[cid], id=cid, title=title))
+    id_to_n = {cid: i + 1 for i, cid in enumerate(ids_in_order)}
+
+    def _repl(m: re.Match) -> str:
+        cid = m.group(1)
+        return f"[{id_to_n[cid]}]" if cid in id_to_n else ""
+
+    new_text = pattern.sub(_repl, reply_text)
+    # Tidy up any spacing left by a stripped marker (e.g. "foo  ." -> "foo.")
+    new_text = re.sub(r"[ \t]{2,}", " ", new_text)
+    new_text = re.sub(r"\s+([.,;:])", r"\1", new_text)
+
+    refs = [ChatReference(n=id_to_n[cid], id=cid, title=id_to_title[cid]) for cid in ids_in_order]
     return new_text, refs
 
 
@@ -363,7 +382,6 @@ def chat(req: ChatRequest):
                 pass  # silently ignore title-gen failures
 
         # Soft mastery bump for engaged concepts
-        from learning_memory_os.schemas.artifacts import ArtifactType
         for it in response.selected_items:
             # artifact_type is ArtifactType enum (str subclass); compare .value
             if it.artifact_type is not None and it.artifact_type.value == "concept":
@@ -381,7 +399,15 @@ def chat(req: ChatRequest):
 
         conn.commit()
 
-        new_text, refs = _substitute_citations(response.text, decision.selected)
+        # Resolve citations against everything the tutor could have cited: the
+        # full candidate pool plus the items it actually saw. Items carry full
+        # UUIDs but the model cites the 8-char prefix (e.g. [ad12ce93]), so key
+        # the lookup by both the full id and its prefix.
+        id_to_title: dict[str, str] = {}
+        for it in [*candidates, *response.selected_items, *decision.selected]:
+            id_to_title.setdefault(it.id, it.title)
+            id_to_title.setdefault(it.id[:8], it.title)
+        new_text, refs = _substitute_citations(response.text, id_to_title)
 
         def _item(it, scores):
             sc = scores.get(it.id)
@@ -410,11 +436,46 @@ def chat(req: ChatRequest):
 
 class QuizGenRequest(BaseModel):
     topic_id: str
+    student_id: Optional[str] = None
 
 
 class QuizGenResponse(BaseModel):
     question: str
     rubric: str
+    difficulty: str = "Easy"
+
+
+# Adaptive difficulty bands. `lo` is the inclusive lower bound on the blended
+# proficiency score (0..1). Questions get harder as the student improves.
+_QUIZ_BANDS = [
+    (0.0, "Easy",
+     "Make this an EASY warm-up: test recall and basic intuition of ONE core "
+     "concept. Answerable in 2-3 sentences. No math derivations, multi-part "
+     "questions, or obscure edge cases."),
+    (0.4, "Medium",
+     "Make this MODERATE: ask the student to apply one concept to a concrete, "
+     "realistic scenario. Light reasoning, answerable in 3-5 sentences."),
+    (0.65, "Hard",
+     "Make this CHALLENGING: require comparing two approaches or analyzing a "
+     "tradeoff / failure mode. Answerable in a short paragraph."),
+    (0.85, "Expert",
+     "Make this EXPERT-level: probe edge cases, quantitative reasoning, or "
+     "synthesis across multiple concepts. Assume strong mastery."),
+]
+
+
+def _quiz_difficulty(mastery_avg, recent_scores) -> tuple[str, str, float]:
+    """Blend topic mastery with recent quiz performance into a difficulty band.
+    New/unknown topics start gentle so students aren't thrown in the deep end."""
+    base = 0.2 if mastery_avg is None else float(mastery_avg)
+    if recent_scores:
+        ra = sum(recent_scores) / len(recent_scores)
+        base = 0.6 * base + 0.4 * ra
+    label, guidance = _QUIZ_BANDS[0][1], _QUIZ_BANDS[0][2]
+    for lo, lbl, g in _QUIZ_BANDS:
+        if base >= lo:
+            label, guidance = lbl, g
+    return label, guidance, base
 
 
 @app.post("/api/quiz/generate", response_model=QuizGenResponse)
@@ -430,18 +491,47 @@ def quiz_generate(req: QuizGenRequest):
                 (req.topic_id,),
             )
             excerpt = "\n\n".join(r["body"] for r in cur.fetchall())
+
+            mastery_avg = None
+            recent_scores: list[float] = []
+            if req.student_id:
+                cur.execute(
+                    "SELECT avg(m.score) AS a FROM mastery m "
+                    "JOIN semantic_items s ON s.id = m.concept_id "
+                    "WHERE m.student_id = %s AND s.topic_id = %s",
+                    (req.student_id, req.topic_id),
+                )
+                row = cur.fetchone()
+                mastery_avg = row["a"] if row and row["a"] is not None else None
+
+                cur.execute(
+                    "SELECT (payload->>'score')::float AS sc FROM episodic_events "
+                    "WHERE student_id = %s AND event_type = 'quiz_attempt' "
+                    "  AND payload->>'topic_id' = %s AND payload ? 'score' "
+                    "ORDER BY occurred_at DESC LIMIT 3",
+                    (req.student_id, req.topic_id),
+                )
+                recent_scores = [r["sc"] for r in cur.fetchall() if r["sc"] is not None]
     finally:
         conn.close()
     if not excerpt:
         raise HTTPException(status_code=400, detail=f"No material for topic '{req.topic_id}'")
+
+    label, guidance, _eff = _quiz_difficulty(mastery_avg, recent_scores)
     data = llm.complete_with_schema(
-        system="Generate ONE substantive quiz question on the given ML systems engineering topic.",
+        system=(
+            "Generate ONE quiz question on the given ML systems engineering topic, "
+            "calibrated to the student's current level. Keep it focused and clearly "
+            "worded; prefer testing understanding over trickiness. The rubric should "
+            "list the key points a correct answer must cover.\n\n"
+            f"DIFFICULTY — {label}: {guidance}"
+        ),
         user=f"TOPIC: {req.topic_id}\n\nMATERIAL EXCERPT:\n{excerpt[:3000]}",
         schema=QUIZ_QUESTION_SCHEMA,
         tool_name="submit_quiz_question",
         tool_description="Submit the generated quiz question and rubric.",
     )
-    return QuizGenResponse(question=data["question"], rubric=data["rubric"])
+    return QuizGenResponse(question=data["question"], rubric=data["rubric"], difficulty=label)
 
 
 class QuizScoreRequest(BaseModel):
@@ -668,6 +758,130 @@ def student_progress(student_id: str):
             for m in student.active_misconceptions(student_id)
         ]
         return {"topics": topic_summaries, "misconceptions": misconceptions}
+    finally:
+        conn.close()
+
+
+@app.get("/api/student/{student_id}/activity")
+def student_activity(student_id: str):
+    """Aggregate everything a student has done: lifetime stats, quiz-score
+    history, and a recent activity timeline — all from episodic_events + mastery."""
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(student_id)
+
+        mastery = student.mastery_for(student_id)
+        concepts_assessed = len(mastery)
+        concepts_mastered = sum(1 for m in mastery if m.score >= 0.7)
+        misconceptions = student.active_misconceptions(student_id)
+
+        with conn.cursor() as cur:
+            # Event-type counts
+            cur.execute(
+                "SELECT event_type, count(*) AS n FROM episodic_events "
+                "WHERE student_id = %s GROUP BY event_type",
+                (student_id,),
+            )
+            counts = {r["event_type"]: r["n"] for r in cur.fetchall()}
+
+            # Quiz score history (chronological)
+            cur.execute(
+                "SELECT (payload->>'topic_id') AS topic_id, "
+                "       (payload->>'score')::float AS score, occurred_at "
+                "FROM episodic_events "
+                "WHERE student_id = %s AND event_type = 'quiz_attempt' "
+                "  AND payload ? 'score' "
+                "ORDER BY occurred_at ASC",
+                (student_id,),
+            )
+            quiz_rows = cur.fetchall()
+
+            # Recent timeline (questions, quizzes, feedback)
+            cur.execute(
+                "SELECT event_type, payload, occurred_at FROM episodic_events "
+                "WHERE student_id = %s AND event_type IN ('question','quiz_attempt','feedback') "
+                "ORDER BY occurred_at DESC LIMIT 40",
+                (student_id,),
+            )
+            tl_rows = cur.fetchall()
+
+            # Active span + distinct active days
+            cur.execute(
+                "SELECT min(occurred_at) AS first, max(occurred_at) AS last, "
+                "       count(DISTINCT occurred_at::date) AS days "
+                "FROM episodic_events WHERE student_id = %s",
+                (student_id,),
+            )
+            span = cur.fetchone() or {}
+
+            # Topics touched (distinct topic_id over assessed concepts)
+            topics_touched = 0
+            ids = [m.concept_id for m in mastery]
+            if ids:
+                cur.execute(
+                    "SELECT count(DISTINCT topic_id) AS n FROM semantic_items WHERE id::text = ANY(%s)",
+                    (ids,),
+                )
+                topics_touched = cur.fetchone()["n"]
+
+            # Conversation count
+            cur.execute(
+                "SELECT count(*) AS n FROM conversations WHERE student_id = %s",
+                (student_id,),
+            )
+            conv_count = cur.fetchone()["n"]
+
+        quiz_scores = [q["score"] for q in quiz_rows if q["score"] is not None]
+        avg_quiz = round(sum(quiz_scores) / len(quiz_scores), 3) if quiz_scores else None
+
+        def _label(row):
+            p = row["payload"] or {}
+            if row["event_type"] == "question":
+                return (p.get("text") or p.get("question") or p.get("task") or "Asked a question")[:120]
+            if row["event_type"] == "quiz_attempt":
+                t = p.get("topic_id") or ""
+                return f"Quiz · {t}" if t else "Took a quiz"
+            if row["event_type"] == "feedback":
+                return "Rated a tutor response"
+            return row["event_type"]
+
+        timeline = [
+            {
+                "type": r["event_type"],
+                "label": _label(r),
+                "topic_id": (r["payload"] or {}).get("topic_id"),
+                "score": (r["payload"] or {}).get("score"),
+                "occurred_at": r["occurred_at"].isoformat() if r["occurred_at"] else None,
+            }
+            for r in tl_rows
+        ]
+
+        return {
+            "stats": {
+                "questions": counts.get("question", 0),
+                "quizzes": counts.get("quiz_attempt", 0),
+                "feedback": counts.get("feedback", 0),
+                "avg_quiz_score": avg_quiz,
+                "concepts_assessed": concepts_assessed,
+                "concepts_mastered": concepts_mastered,
+                "topics_touched": topics_touched,
+                "misconceptions": len(misconceptions),
+                "conversations": conv_count,
+                "active_days": span.get("days", 0) or 0,
+                "first_active": span["first"].isoformat() if span.get("first") else None,
+                "last_active": span["last"].isoformat() if span.get("last") else None,
+            },
+            "quiz_history": [
+                {
+                    "topic_id": q["topic_id"],
+                    "score": q["score"],
+                    "occurred_at": q["occurred_at"].isoformat() if q["occurred_at"] else None,
+                }
+                for q in quiz_rows
+            ],
+            "timeline": timeline,
+        }
     finally:
         conn.close()
 

@@ -132,7 +132,6 @@ def main(
                 with ThreadPoolExecutor(max_workers=workers) as ex:
                     futures = {ex.submit(_build_one, item, llm): item for item in batch}
                     for fut in as_completed(futures):
-                        item = futures[fut]
                         try:
                             traj = fut.result()
                             f.write(json.dumps(traj.model_dump(), default=str) + "\n")

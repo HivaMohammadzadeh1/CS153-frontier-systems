@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from learning_memory_os.schemas.memory import MemoryItem
 from learning_memory_os.agents.tutor import TutorAgent
 
