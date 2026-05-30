@@ -44,6 +44,10 @@ srun --gres=gpu:1 --cpus-per-task=16 \
     # transformers/peft/datasets to a late-2024 set that matches torch 2.6.
     pip install --no-cache-dir 'transformers==4.47.1' 'peft==0.14.0' 'datasets<4' 'accelerate<2' bitsandbytes
     export PYTHONPATH=src
+    # Running under srun sets SLURM_* vars, so HF accelerate tries to init
+    # torch.distributed via env:// but has no rendezvous endpoint. Pin a
+    # single-process group so it initializes cleanly (we use 1 GPU, 1 task).
+    export MASTER_ADDR=127.0.0.1 MASTER_PORT=29500 RANK=0 WORLD_SIZE=1 LOCAL_RANK=0
     python -m scripts.finetune_router \
       --size '$SIZE_ID' \
       --trajectories '$TRAJ' \
