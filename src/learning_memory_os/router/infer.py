@@ -19,8 +19,14 @@ class FineTunedRouter:
         self.tokenizer = AutoTokenizer.from_pretrained(adapter_dir)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        base = AutoModelForCausalLM.from_pretrained(base_model, dtype=torch.bfloat16)
+        # torch_dtype (not dtype) is the kwarg in transformers <4.49, which is
+        # what the NGC container's torch supports.
+        base = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch.bfloat16)
         self.model = PeftModel.from_pretrained(base, adapter_dir)
+        # Move to GPU for inference if available (otherwise it runs on CPU,
+        # which is unusably slow for the larger bases).
+        if torch.cuda.is_available():
+            self.model = self.model.to("cuda")
         self.model.eval()
 
     @torch.no_grad()

@@ -32,7 +32,9 @@ srun --gres=gpu:1 --cpus-per-task=16 \
   --container-workdir="$REPO" \
   bash -lc "
     set -euo pipefail
-    pip install --no-cache-dir 'peft>=0.19' 'datasets>=4' accelerate bitsandbytes
+    # Pin to versions compatible with the NGC container's (alpha) torch
+    # (same as cluster/finetune_router.sbatch).
+    pip install --no-cache-dir 'transformers==4.47.1' 'peft==0.14.0' 'datasets<4' 'accelerate<2' bitsandbytes
     export PYTHONPATH=src
     python -m scripts.eval_routers \
       --no-frontier \
