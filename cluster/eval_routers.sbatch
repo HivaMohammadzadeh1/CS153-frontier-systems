@@ -36,7 +36,7 @@ srun --gres=gpu:1 --cpus-per-task=16 \
     # (same as cluster/finetune_router.sbatch).
     # eval_routers.py imports learning_memory_os.config (pydantic-settings),
     # which the NGC image doesn't ship — add it.
-    pip install --no-cache-dir 'transformers==4.47.1' 'peft==0.14.0' 'datasets<4' 'accelerate<2' bitsandbytes pydantic-settings
+    pip install --no-cache-dir 'transformers==4.47.1' 'peft==0.14.0' 'datasets<4' 'accelerate<2' bitsandbytes pydantic-settings anthropic openai
     export PYTHONPATH=src
     python -m scripts.eval_routers \
       --no-frontier \
