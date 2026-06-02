@@ -21,22 +21,27 @@ class RoutingEngine:
         *,
         candidates: list[MemoryItem],
         task_embedding: list[float],
-        active_misconceptions: set[str],
+        misconception_concept_ids: set[str] | None = None,
+        misconception_topics: set[str] | None = None,
         prerequisites: set[str],
         recent_ids: set[str],
         reuse_counts: dict[str, int],
+        due_concept_ids: set[str] | None = None,
         budget: int,
+        diversity: float = 0.7,
     ) -> RoutingDecision:
         ctx = ScoringContext(
             task_embedding=task_embedding,
-            active_misconception_titles=active_misconceptions,
+            misconception_concept_ids=misconception_concept_ids or set(),
+            misconception_topics=misconception_topics or set(),
             prerequisite_titles=prerequisites,
             recent_item_ids=recent_ids,
             reuse_counts=reuse_counts,
+            due_concept_ids=due_concept_ids or set(),
         )
         scored = [(it, score_item(it, ctx).total) for it in candidates]
         scores = {it.id: score_item(it, ctx) for it in candidates}
-        selected = pack_under_budget(scored, budget=budget)
+        selected = pack_under_budget(scored, budget=budget, diversity=diversity)
         selected_ids = {s.id for s in selected}
         dropped = [it for it in candidates if it.id not in selected_ids]
         tokens_used = sum(s.token_estimate for s in selected)

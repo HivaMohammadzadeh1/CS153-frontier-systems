@@ -70,7 +70,7 @@ def test_xtrace_item_competes_for_budget_alongside_semantic_items():
     decision = engine.route(
         candidates=[sem_a, sem_b, xtrace_item],
         task_embedding=[1.0, 0.0],
-        active_misconceptions=set(),
+        misconception_concept_ids=set(),
         prerequisites=set(),
         recent_ids=set(),
         reuse_counts={},
@@ -112,7 +112,7 @@ def test_xtrace_item_dropped_when_budget_too_tight():
     decision = engine.route(
         candidates=[sem, big],
         task_embedding=[1.0, 0.0],
-        active_misconceptions=set(),
+        misconception_concept_ids=set(),
         prerequisites=set(),
         recent_ids=set(),
         reuse_counts={},

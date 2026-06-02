@@ -24,7 +24,7 @@ def test_relevance_dominates_when_other_signals_zero():
     b = _item("b", "tokenization", embedding=[0.0, 1.0] + [0.0] * 1534)
     ctx = ScoringContext(
         task_embedding=[1.0, 0.0] + [0.0] * 1534,
-        active_misconception_titles=set(),
+        misconception_concept_ids=set(),
         prerequisite_titles=set(),
         recent_item_ids=set(),
         reuse_counts={},
@@ -38,7 +38,7 @@ def test_misconception_boost_applied():
     a = _item("misc:wrong-kv", "KV cache stores token ids: misconception", tier="student")
     ctx = ScoringContext(
         task_embedding=[0.0] * 1536,
-        active_misconception_titles={"misc:wrong-kv"},
+        misconception_concept_ids={"misc:wrong-kv"},
         prerequisite_titles=set(),
         recent_item_ids=set(),
         reuse_counts={},
@@ -57,7 +57,7 @@ def test_recency_decays():
 
     ctx = ScoringContext(
         task_embedding=[0.0] * 1536,
-        active_misconception_titles=set(),
+        misconception_concept_ids=set(),
         prerequisite_titles=set(),
         recent_item_ids=set(),
         reuse_counts={},

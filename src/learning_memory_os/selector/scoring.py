@@ -1,5 +1,5 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ..schemas.memory import MemoryItem
 
@@ -7,10 +7,18 @@ from ..schemas.memory import MemoryItem
 @dataclass
 class ScoringContext:
     task_embedding: list[float]
-    active_misconception_titles: set[str]
-    prerequisite_titles: set[str]
-    recent_item_ids: set[str]
-    reuse_counts: dict[str, int]
+    # Semantic-item ids of the concepts a student's active misconceptions point
+    # at (misconceptions.concept_id -> semantic_items.id). Items whose id is in
+    # this set directly address a live misconception.
+    misconception_concept_ids: set[str] = field(default_factory=set)
+    # Topics those flagged concepts belong to — items in the same topic get a
+    # partial boost even if they aren't the exact flagged concept.
+    misconception_topics: set[str] = field(default_factory=set)
+    prerequisite_titles: set[str] = field(default_factory=set)
+    recent_item_ids: set[str] = field(default_factory=set)
+    reuse_counts: dict[str, int] = field(default_factory=dict)
+    # Concept ids that are due/overdue for spaced-repetition review (Track B).
+    due_concept_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -20,6 +28,7 @@ class ItemScore:
     misconception: float
     prerequisite: float
     reuse: float
+    review_due: float = 0.0
 
     @property
     def total(self) -> float:
@@ -29,6 +38,7 @@ class ItemScore:
             + 0.8 * self.misconception
             + 0.6 * self.prerequisite
             + 0.2 * self.reuse
+            + 0.3 * self.review_due
         )
 
 
@@ -60,13 +70,20 @@ def score_item(item: MemoryItem, ctx: ScoringContext) -> ItemScore:
     else:
         relevance = _cosine(item.embedding, ctx.task_embedding) if item.embedding else 0.0
     recency = _recency(item) if item.tier in ("episodic", "xtrace") else 0.0
-    misconception = 1.0 if item.id in ctx.active_misconception_titles else 0.0
+    if item.id in ctx.misconception_concept_ids:
+        misconception = 1.0
+    elif item.topic_id and item.topic_id in ctx.misconception_topics:
+        misconception = 0.4
+    else:
+        misconception = 0.0
     prerequisite = 1.0 if item.title in ctx.prerequisite_titles else 0.0
     reuse = math.log1p(ctx.reuse_counts.get(item.id, 0))
+    review_due = 1.0 if item.id in ctx.due_concept_ids else 0.0
     return ItemScore(
         relevance=relevance,
         recency=recency,
         misconception=misconception,
         prerequisite=prerequisite,
         reuse=reuse,
+        review_due=review_due,
     )

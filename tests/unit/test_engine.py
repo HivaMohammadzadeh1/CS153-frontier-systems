@@ -23,7 +23,7 @@ def test_decision_includes_selected_and_dropped():
     decision = eng.route(
         candidates=items,
         task_embedding=[1.0] + [0.0] * 1535,
-        active_misconceptions=set(),
+        misconception_concept_ids=set(),
         prerequisites=set(),
         recent_ids=set(),
         reuse_counts={},
