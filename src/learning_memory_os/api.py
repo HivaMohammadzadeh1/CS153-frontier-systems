@@ -4,15 +4,20 @@ Wraps the existing Python backend (TutorAgent, RoutingEngine, stores, quiz harne
 in HTTP endpoints. Serves the static frontend from /web.
 """
 
+import json
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from learning_memory_os.auth import COOKIE_NAME, AuthStore
 
 from learning_memory_os.config import get_settings
 from learning_memory_os.llm import LLM
@@ -24,9 +29,12 @@ from learning_memory_os.memory.episodic import EpisodicStore
 from learning_memory_os.memory.conversation import ConversationStore
 from learning_memory_os.selector.engine import RoutingEngine
 from learning_memory_os.agents.tutor import TutorAgent
+from learning_memory_os.agents.profile import build_profile
+from learning_memory_os.memory.trace import TraceStore
 from learning_memory_os.logging_utils.interactions import InteractionLogger
 from learning_memory_os.ingestion.topic_loader import load_topics, resolve_prerequisite_titles
 from learning_memory_os.eval.quiz import QuizQuestion, score_answer
+from learning_memory_os.memory.decay import effective_score
 
 # Project root: two levels up from src/learning_memory_os/api.py
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -78,6 +86,39 @@ def _settings():
     return get_settings()
 
 
+# ---- Auth gating ----
+# Public API paths that never require a session; everything else under /api/ does.
+_PUBLIC_API = ("/api/health", "/api/topics", "/api/info", "/api/routers", "/api/auth/")
+_STUDENT_PATH_RE = re.compile(r"^/api/student/([^/]+)")
+
+
+def _username_from_request(request: Request) -> Optional[str]:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    conn = connect(_settings().database_url)
+    try:
+        return AuthStore(conn).username_for_session(token)
+    finally:
+        conn.close()
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    """Require a valid session for all /api/ data routes (except the public list),
+    and enforce that /api/student/{id}/... matches the logged-in user."""
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith(_PUBLIC_API):
+        username = _username_from_request(request)
+        if not username:
+            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+        request.state.username = username
+        m = _STUDENT_PATH_RE.match(path)
+        if m and unquote(m.group(1)) != username:
+            return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    return await call_next(request)
+
+
 def _llm_and_embedder():
     s = _settings()
     return LLM(api_key=s.anthropic_api_key), Embedder(api_key=s.openai_api_key)
@@ -90,6 +131,80 @@ _AREA_NAMES: dict[str, str] = (
 ).get("areas", {})
 
 
+# ---- Auth endpoints ----
+class SignupRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    login: str          # username OR email
+    password: str
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    s = _settings()
+    response.set_cookie(
+        COOKIE_NAME, token,
+        httponly=True, samesite="lax", secure=s.cookie_secure,
+        max_age=s.session_ttl_days * 86400, path="/",
+    )
+
+
+@app.post("/api/auth/signup")
+def auth_signup(req: SignupRequest, response: Response):
+    conn = connect(_settings().database_url)
+    try:
+        store = AuthStore(conn)
+        try:
+            user = store.create_user(req.username, req.email, req.password)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        token = store.create_session(user["id"], user["username"], ttl_days=_settings().session_ttl_days)
+        conn.commit()
+    finally:
+        conn.close()
+    _set_session_cookie(response, token)
+    return {"username": user["username"]}
+
+
+@app.post("/api/auth/login")
+def auth_login(req: LoginRequest, response: Response):
+    conn = connect(_settings().database_url)
+    try:
+        store = AuthStore(conn)
+        user = store.verify_login(req.login, req.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        token = store.create_session(user["id"], user["username"], ttl_days=_settings().session_ttl_days)
+        conn.commit()
+    finally:
+        conn.close()
+    _set_session_cookie(response, token)
+    return {"username": user["username"]}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response):
+    conn = connect(_settings().database_url)
+    try:
+        AuthStore(conn).delete_session(request.cookies.get(COOKIE_NAME))
+        conn.commit()
+    finally:
+        conn.close()
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    username = _username_from_request(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"username": username}
+
+
 # ---- Request/response models ----
 
 class ChatRequest(BaseModel):
@@ -99,6 +214,7 @@ class ChatRequest(BaseModel):
     question: str
     budget: int = 3000
     reuse_counts: dict[str, int] = {}
+    router: Optional[str] = None   # None/"heuristic" or a finetuned size id e.g. "qwen2_5_7b"
 
 
 class ChatReference(BaseModel):
@@ -128,6 +244,7 @@ class ChatResponse(BaseModel):
     dropped: list[ChatItem]
     budget: int
     tokens_used: int
+    router: str = "heuristic"        # which router actually produced the selection
 
 
 @app.get("/api/health")
@@ -189,6 +306,18 @@ def student_messages(student_id: str, limit: int = 40):
         return StoredMessagesResponse(messages=msgs)
     finally:
         conn.close()
+
+
+@app.get("/api/routers")
+def list_routers():
+    """Available context-router backends: the heuristic engine plus any
+    fine-tuned LoRA adapters present on disk."""
+    try:
+        from learning_memory_os.router.product_adapter import available_sizes
+        sizes = available_sizes()
+    except Exception:
+        sizes = []
+    return {"heuristic": True, "finetuned": sizes}
 
 
 @app.get("/api/info")
@@ -261,177 +390,315 @@ TITLE_SCHEMA = {
 }
 
 
+def _prepare_turn(conn, req: ChatRequest, llm, embedder, engine, logger) -> dict:
+    """Everything a chat turn needs *before* generation: conversation, candidate
+    pool, context selection (heuristic or fine-tuned router), profile, and the
+    built prompt. Shared by /api/chat and /api/chat/stream."""
+    student = StudentStore(conn)
+    student.ensure_student(req.student_id)
+    semantic = SemanticStore(conn)
+    episodic = EpisodicStore(conn)
+    convs = ConversationStore(conn)
+
+    conv_was_created = False
+    conversation_id = req.conversation_id
+    if conversation_id is None:
+        conversation_id = convs.create(req.student_id, title="New chat")
+        conv_was_created = True
+
+    if req.topic_id:
+        candidates = semantic.by_topic(req.topic_id)
+    else:
+        q_emb = embedder.embed_one(req.question)
+        candidates = semantic.vector_search(query=q_emb, k=20)
+
+    active_misc = student.active_misconceptions(req.student_id)
+    misc_concept_ids = {m["concept_id"] for m in active_misc if m.get("concept_id")}
+    misc_topics: set[str] = {m["topic_id"] for m in active_misc if m.get("topic_id")}
+    if misc_concept_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT topic_id FROM semantic_items WHERE id::text = ANY(%s)",
+                (list(misc_concept_ids),),
+            )
+            misc_topics |= {r["topic_id"] for r in cur.fetchall()}
+    due_concept_ids = set(student.due_for_review(req.student_id))
+    prereq_titles = (
+        resolve_prerequisite_titles(conn, topic_id=req.topic_id, topics=_TOPICS)
+        if req.topic_id else set()
+    )
+    recent = episodic.recent(req.student_id, limit=10)
+    recent_ids = {e.id for e in recent if e.id}
+
+    profile = build_profile(conn, req.student_id)
+    mastery_records = student.mastery_for(req.student_id)
+
+    router_used = "heuristic"
+    preselected = None
+    if req.router and req.router != "heuristic":
+        from learning_memory_os.router.product_adapter import finetuned_select, available_sizes
+        if req.router in available_sizes():
+            try:
+                preselected = finetuned_select(
+                    size_id=req.router, student=student, student_id=req.student_id,
+                    question=req.question, candidates=candidates, budget=req.budget,
+                )
+                router_used = req.router
+            except Exception as e:  # noqa: BLE001
+                logger.log({"event": "finetuned_router_failed", "router": req.router, "error": str(e)})
+                preselected = None
+        else:
+            logger.log({"event": "finetuned_router_unavailable", "router": req.router})
+
+    task_emb = embedder.embed_one(req.question)
+    decision = engine.route(
+        candidates=candidates, task_embedding=task_emb,
+        misconception_concept_ids=misc_concept_ids, misconception_topics=misc_topics,
+        prerequisites=prereq_titles, recent_ids=recent_ids,
+        reuse_counts=dict(req.reuse_counts), due_concept_ids=due_concept_ids, budget=req.budget,
+    )
+    selected_items = preselected if preselected is not None else decision.selected
+    system, user_prompt = TutorAgent.build_prompt(
+        req.question, selected_items,
+        weak_concepts=profile.weaknesses or None, strong_concepts=profile.strengths or None,
+        active_misconception_texts=profile.misconceptions or None,
+        due_concepts=profile.due_for_review or None,
+    )
+    return {
+        "conversation_id": conversation_id, "conv_was_created": conv_was_created,
+        "candidates": candidates, "decision": decision, "preselected": preselected,
+        "selected_items": selected_items, "router_used": router_used,
+        "profile": profile, "mastery_records": mastery_records,
+        "recent_ids": recent_ids, "due_concept_ids": due_concept_ids,
+        "system": system, "user_prompt": user_prompt,
+    }
+
+
+def _finalize_turn(conn, req: ChatRequest, llm, logger, p: dict, reply_text: str) -> dict:
+    """Everything *after* generation: capture the trace, log episodic events,
+    auto-title, soft mastery bump, and resolve citations. Returns ChatResponse fields."""
+    student = StudentStore(conn)
+    episodic = EpisodicStore(conn)
+    convs = ConversationStore(conn)
+    decision = p["decision"]
+    candidates = p["candidates"]
+    selected_items = p["selected_items"]
+    preselected = p["preselected"]
+    conversation_id = p["conversation_id"]
+    profile = p["profile"]
+    mastery_records = p["mastery_records"]
+    tokens_used = sum((getattr(it, "token_estimate", 0) or 0) for it in selected_items)
+
+    try:
+        TraceStore(conn).record_turn(
+            student_id=req.student_id, conversation_id=conversation_id,
+            task_text=req.question, budget=req.budget,
+            student_state={
+                "mastery": {m.concept_id: round(m.score, 3) for m in mastery_records},
+                "active_misconceptions": profile.misconceptions,
+                "recent_episodic_ids": list(p["recent_ids"]),
+                "due_concept_ids": list(p["due_concept_ids"]),
+            },
+            candidate_pool=[
+                {"id": it.id, "title": it.title,
+                 "body_excerpt": (it.body or "")[:200], "token_estimate": it.token_estimate}
+                for it in candidates
+            ],
+            selected_ids=[it.id for it in decision.selected],
+            dropped_ids=[it.id for it in decision.dropped],
+            scores={k: round(v.total, 4) for k, v in decision.scores.items()},
+            reply=reply_text, model=getattr(llm, "model", None),
+        )
+    except Exception as e:  # noqa: BLE001 — capture is best-effort
+        logger.log({"event": "trace_capture_failed", "student_id": req.student_id, "error": str(e)})
+
+    episodic.append(
+        student_id=req.student_id, event_type="question",
+        payload={"text": req.question, "topic_id": req.topic_id, "source": "api"},
+        conversation_id=conversation_id,
+    )
+    episodic.append(
+        student_id=req.student_id, event_type="tutor_reply",
+        payload={"text": reply_text, "selected_ids": [it.id for it in selected_items],
+                 "tokens_used": tokens_used},
+        conversation_id=conversation_id,
+    )
+    convs.touch(conversation_id)
+
+    current_title = convs.get_title(conversation_id)
+    if p["conv_was_created"] or current_title in ("", "New chat"):
+        try:
+            title_data = llm.complete_with_schema(
+                system="Summarize a student tutoring question into a SHORT title (3-6 words). Output only the title field.",
+                user=f"STUDENT QUESTION: {req.question}",
+                schema=TITLE_SCHEMA, tool_name="submit_title",
+                tool_description="Submit a short conversation title.", max_tokens=128,
+            )
+            title = (title_data.get("title") or "").strip()
+            if title:
+                convs.set_title(conversation_id, title[:80])
+        except Exception:
+            pass
+
+    for it in selected_items:
+        if it.artifact_type is not None and it.artifact_type.value == "concept":
+            current = next((m for m in student.mastery_for(req.student_id) if m.concept_id == it.id), None)
+            if current:
+                new_score, new_conf = min(1.0, current.score + 0.02), min(1.0, current.confidence + 0.05)
+            else:
+                new_score, new_conf = 0.3, 0.1
+            student.update_mastery(req.student_id, it.id, new_score, new_conf)
+
+    conn.commit()
+
+    id_to_title: dict[str, str] = {}
+    for it in [*candidates, *selected_items, *decision.selected]:
+        id_to_title.setdefault(it.id, it.title)
+        id_to_title.setdefault(it.id[:8], it.title)
+    new_text, refs = _substitute_citations(reply_text, id_to_title)
+
+    def _item(it, scores):
+        sc = scores.get(it.id)
+        return ChatItem(
+            id=it.id, title=it.title, body=it.body, token_estimate=it.token_estimate,
+            score_total=sc.total if sc else 0.0, score_relevance=sc.relevance if sc else 0.0,
+            score_recency=sc.recency if sc else 0.0, score_misconception=sc.misconception if sc else 0.0,
+            score_prerequisite=sc.prerequisite if sc else 0.0, score_reuse=sc.reuse if sc else 0.0,
+        )
+
+    if preselected is not None:
+        sel_ids = {it.id for it in selected_items}
+        dropped_items = [it for it in candidates if it.id not in sel_ids][:8]
+        resp_selected = [_item(it, {}) for it in selected_items]
+        resp_dropped = [_item(it, {}) for it in dropped_items]
+        resp_budget, resp_tokens = req.budget, tokens_used
+    else:
+        resp_selected = [_item(it, decision.scores) for it in decision.selected]
+        resp_dropped = [_item(it, decision.scores) for it in decision.dropped[:8]]
+        resp_budget, resp_tokens = decision.budget, decision.tokens_used
+
+    return {
+        "conversation_id": conversation_id, "reply": new_text, "references": refs,
+        "selected": resp_selected, "dropped": resp_dropped,
+        "budget": resp_budget, "tokens_used": resp_tokens, "router": p["router_used"],
+    }
+
+
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, request: Request):
+    req.student_id = request.state.username   # never trust a client-supplied identity
     llm, embedder = _llm_and_embedder()
     engine = RoutingEngine()
     s = _settings()
-    log_path = s.log_dir / "interactions.jsonl"
-    logger = InteractionLogger(path=log_path)
+    logger = InteractionLogger(path=s.log_dir / "interactions.jsonl")
+    conn = connect(s.database_url)
+    try:
+        p = _prepare_turn(conn, req, llm, embedder, engine, logger)
+        text = llm.complete(system=p["system"], user=p["user_prompt"], max_tokens=1024)
+        return ChatResponse(**_finalize_turn(conn, req, llm, logger, p, text))
+    finally:
+        conn.close()
+
+
+_REASONING_INSTRUCTION = (
+    "\n\nBefore answering, show your reasoning. Output EXACTLY in this format:\n"
+    "---THINKING---\n"
+    "<concise step-by-step reasoning: what the question is really asking, which "
+    "context items are relevant, and how you'll structure the answer>\n"
+    "---ANSWER---\n"
+    "<the student-facing answer, following ALL the style rules above>\n"
+    "The student only sees the answer; keep the reasoning brief (a few sentences)."
+)
+
+
+def _split_thinking(deltas):
+    """Split a raw text stream into ('thinking'|'text', chunk) around the
+    ---THINKING--- / ---ANSWER--- markers. Falls back to all-text if the model
+    doesn't emit the markers, so the answer is never lost."""
+    THINK, ANS = "---THINKING---", "---ANSWER---"
+    phase, buf = "pre", ""
+    for delta in deltas:
+        buf += delta
+        moved = True
+        while moved:
+            moved = False
+            if phase == "pre":
+                i = buf.find(THINK)
+                if i != -1:
+                    buf = buf[i + len(THINK):]
+                    phase = "think"
+                    moved = True
+                else:
+                    stripped = buf.lstrip()
+                    if stripped and not THINK.startswith(stripped[:len(THINK)]):
+                        phase = "answer"   # model skipped the marker
+                        moved = True
+            elif phase == "think":
+                j = buf.find(ANS)
+                if j != -1:
+                    if j > 0:
+                        yield ("thinking", buf[:j])
+                    buf = buf[j + len(ANS):]
+                    phase = "answer"
+                    moved = True
+                else:
+                    hold = len(ANS) - 1
+                    if len(buf) > hold:
+                        yield ("thinking", buf[:-hold])
+                        buf = buf[-hold:]
+            elif phase == "answer":
+                if buf:
+                    yield ("text", buf)
+                    buf = ""
+    if buf:
+        yield ("thinking" if phase == "think" else "text", buf)
+
+
+@app.post("/api/chat/stream")
+def chat_stream(req: ChatRequest, request: Request):
+    """Same as /api/chat but streams the reply token-by-token via SSE, then sends
+    a final `{"done": true, ...}` event with references/selection/conversation_id."""
+    req.student_id = request.state.username
+    llm, embedder = _llm_and_embedder()
+    engine = RoutingEngine()
+    s = _settings()
+    logger = InteractionLogger(path=s.log_dir / "interactions.jsonl")
 
     conn = connect(s.database_url)
     try:
-        student = StudentStore(conn)
-        student.ensure_student(req.student_id)
-        semantic = SemanticStore(conn)
-        episodic = EpisodicStore(conn)
-        convs = ConversationStore(conn)
-
-        # Resolve or create a conversation
-        conv_was_created = False
-        conversation_id = req.conversation_id
-        if conversation_id is None:
-            conversation_id = convs.create(req.student_id, title="New chat")
-            conv_was_created = True
-
-        if req.topic_id:
-            candidates = semantic.by_topic(req.topic_id)
-        else:
-            q_emb = embedder.embed_one(req.question)
-            candidates = semantic.vector_search(query=q_emb, k=20)
-
-        misconceptions = {m["id"] for m in student.active_misconceptions(req.student_id)}
-        prereq_titles = (
-            resolve_prerequisite_titles(conn, topic_id=req.topic_id, topics=_TOPICS)
-            if req.topic_id else set()
-        )
-        recent = episodic.recent(req.student_id, limit=10)
-        recent_ids = {e.id for e in recent if e.id}
-
-        # Build student profile for adaptive prompting
-        mastery_records = student.mastery_for(req.student_id)
-        weak_ids = [m.concept_id for m in mastery_records if m.score < 0.4 and m.confidence > 0.2]
-        strong_ids = [m.concept_id for m in mastery_records if m.score > 0.7 and m.confidence > 0.3]
-
-        weak_titles: list[str] = []
-        strong_titles: list[str] = []
-        if weak_ids or strong_ids:
-            ids_needed = list(set(weak_ids + strong_ids))
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id::text AS id, title FROM semantic_items WHERE id::text = ANY(%s)",
-                    (ids_needed,),
-                )
-                id_to_title = {r["id"]: r["title"] for r in cur.fetchall()}
-            weak_titles = [id_to_title[i] for i in weak_ids if i in id_to_title][:5]
-            strong_titles = [id_to_title[i] for i in strong_ids if i in id_to_title][:5]
-
-        active_misc_texts = [
-            m["description"][:120] for m in student.active_misconceptions(req.student_id)
-        ][:3]
-
-        tutor = TutorAgent(llm=llm, engine=engine, embedder=embedder, logger=logger)
-        response = tutor.answer(
-            student_id=req.student_id,
-            question=req.question,
-            candidates=candidates,
-            active_misconceptions=misconceptions,
-            prerequisites=prereq_titles,
-            recent_ids=recent_ids,
-            reuse_counts=dict(req.reuse_counts),
-            budget=req.budget,
-            weak_concepts=weak_titles or None,
-            strong_concepts=strong_titles or None,
-            active_misconception_texts=active_misc_texts or None,
-        )
-
-        # Re-run engine to recover decision details
-        task_emb = embedder.embed_one(req.question)
-        decision = engine.route(
-            candidates=candidates,
-            task_embedding=task_emb,
-            active_misconceptions=misconceptions,
-            prerequisites=prereq_titles,
-            recent_ids=recent_ids,
-            reuse_counts=dict(req.reuse_counts),
-            budget=req.budget,
-        )
-
-        episodic.append(
-            student_id=req.student_id, event_type="question",
-            payload={"text": req.question, "topic_id": req.topic_id, "source": "api"},
-            conversation_id=conversation_id,
-        )
-        episodic.append(
-            student_id=req.student_id, event_type="tutor_reply",
-            payload={"text": response.text,
-                     "selected_ids": [it.id for it in response.selected_items],
-                     "tokens_used": response.tokens_used},
-            conversation_id=conversation_id,
-        )
-
-        # Bump last_message_at so this conversation rises to the top
-        convs.touch(conversation_id)
-
-        # Auto-title on first user message (if title is still default)
-        current_title = convs.get_title(conversation_id)
-        if conv_was_created or current_title in ("", "New chat"):
-            try:
-                title_data = llm.complete_with_schema(
-                    system="Summarize a student tutoring question into a SHORT title (3-6 words). Output only the title field.",
-                    user=f"STUDENT QUESTION: {req.question}",
-                    schema=TITLE_SCHEMA,
-                    tool_name="submit_title",
-                    tool_description="Submit a short conversation title.",
-                    max_tokens=128,
-                )
-                title = (title_data.get("title") or "").strip()
-                if title:
-                    convs.set_title(conversation_id, title[:80])
-            except Exception:
-                pass  # silently ignore title-gen failures
-
-        # Soft mastery bump for engaged concepts
-        for it in response.selected_items:
-            # artifact_type is ArtifactType enum (str subclass); compare .value
-            if it.artifact_type is not None and it.artifact_type.value == "concept":
-                current = next(
-                    (m for m in student.mastery_for(req.student_id) if m.concept_id == it.id),
-                    None,
-                )
-                if current:
-                    new_score = min(1.0, current.score + 0.02)
-                    new_conf = min(1.0, current.confidence + 0.05)
-                else:
-                    new_score = 0.3  # low initial mastery on first encounter
-                    new_conf = 0.1
-                student.update_mastery(req.student_id, it.id, new_score, new_conf)
-
-        conn.commit()
-
-        # Resolve citations against everything the tutor could have cited: the
-        # full candidate pool plus the items it actually saw. Items carry full
-        # UUIDs but the model cites the 8-char prefix (e.g. [ad12ce93]), so key
-        # the lookup by both the full id and its prefix.
-        id_to_title: dict[str, str] = {}
-        for it in [*candidates, *response.selected_items, *decision.selected]:
-            id_to_title.setdefault(it.id, it.title)
-            id_to_title.setdefault(it.id[:8], it.title)
-        new_text, refs = _substitute_citations(response.text, id_to_title)
-
-        def _item(it, scores):
-            sc = scores.get(it.id)
-            return ChatItem(
-                id=it.id, title=it.title, body=it.body, token_estimate=it.token_estimate,
-                score_total=sc.total if sc else 0.0,
-                score_relevance=sc.relevance if sc else 0.0,
-                score_recency=sc.recency if sc else 0.0,
-                score_misconception=sc.misconception if sc else 0.0,
-                score_prerequisite=sc.prerequisite if sc else 0.0,
-                score_reuse=sc.reuse if sc else 0.0,
-            )
-
-        return ChatResponse(
-            conversation_id=conversation_id,
-            reply=new_text,
-            references=refs,
-            selected=[_item(it, decision.scores) for it in decision.selected],
-            dropped=[_item(it, decision.scores) for it in decision.dropped[:8]],
-            budget=decision.budget,
-            tokens_used=decision.tokens_used,
-        )
-    finally:
+        p = _prepare_turn(conn, req, llm, embedder, engine, logger)
+    except Exception:
         conn.close()
+        raise
+
+    def event_stream():
+        try:
+            chunks: list[str] = []
+            raw = llm.stream(
+                system=p["system"] + _REASONING_INSTRUCTION,
+                user=p["user_prompt"], max_tokens=2048,
+            )
+            for kind, piece in _split_thinking(raw):
+                if kind == "thinking":
+                    yield f"data: {json.dumps({'thinking': piece})}\n\n"
+                else:
+                    chunks.append(piece)
+                    yield f"data: {json.dumps({'delta': piece})}\n\n"
+            fin = _finalize_turn(conn, req, llm, logger, p, "".join(chunks))
+            done = ChatResponse(**fin).model_dump()
+            done["done"] = True
+            yield f"data: {json.dumps(done)}\n\n"
+        except Exception as e:  # noqa: BLE001
+            logger.log({"event": "chat_stream_failed", "student_id": req.student_id, "error": str(e)})
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            conn.close()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 class QuizGenRequest(BaseModel):
@@ -479,7 +746,8 @@ def _quiz_difficulty(mastery_avg, recent_scores) -> tuple[str, str, float]:
 
 
 @app.post("/api/quiz/generate", response_model=QuizGenResponse)
-def quiz_generate(req: QuizGenRequest):
+def quiz_generate(req: QuizGenRequest, request: Request):
+    req.student_id = request.state.username
     llm, _ = _llm_and_embedder()
     conn = connect(_settings().database_url)
     try:
@@ -548,7 +816,8 @@ class QuizScoreResponse(BaseModel):
 
 
 @app.post("/api/quiz/score", response_model=QuizScoreResponse)
-def quiz_score(req: QuizScoreRequest):
+def quiz_score(req: QuizScoreRequest, request: Request):
+    req.student_id = request.state.username
     llm, _ = _llm_and_embedder()
     q = QuizQuestion(question=req.question, rubric=req.rubric)
     result = score_answer(question=q, student_answer=req.answer, judge_llm=llm)
@@ -574,19 +843,13 @@ def quiz_score(req: QuizScoreRequest):
             )
             concept_ids = [r["id"] for r in cur.fetchall()]
 
+        # Pass the raw quiz score as evidence; update_mastery does the
+        # confidence-weighted blend with the prior (no manual EMA here).
         for cid in concept_ids:
-            current = next(
-                (m for m in student.mastery_for(req.student_id) if m.concept_id == cid),
-                None,
-            )
-            if current:
-                # Exponential moving average: 70% old, 30% new
-                new_score = 0.7 * current.score + 0.3 * result.score
-                new_conf = min(1.0, current.confidence + 0.1)
-            else:
-                new_score = result.score
-                new_conf = 0.3  # low confidence on first observation
-            student.update_mastery(req.student_id, cid, new_score, new_conf)
+            student.update_mastery(req.student_id, cid, result.score, 0.3)
+
+        # Quiz score is the outcome reward for the turn that taught this material.
+        TraceStore(conn).attach_reward(req.student_id, result.score)
 
         conn.commit()
     finally:
@@ -633,6 +896,7 @@ class DiagnosticTurnRequest(BaseModel):
     follow_up_question: str
     student_answer: str
     turn_index: int = 1
+    topic_id: str | None = None
 
 
 class DiagnosticTurnResponse(BaseModel):
@@ -643,7 +907,8 @@ class DiagnosticTurnResponse(BaseModel):
 
 
 @app.post("/api/diagnostic/turn", response_model=DiagnosticTurnResponse)
-def diagnostic_turn(req: DiagnosticTurnRequest):
+def diagnostic_turn(req: DiagnosticTurnRequest, request: Request):
+    req.student_id = request.state.username
     llm, _ = _llm_and_embedder()
     data = llm.complete_with_schema(
         system=("You are a tutor walking a student through a misunderstanding. Given the student's "
@@ -670,6 +935,7 @@ def diagnostic_turn(req: DiagnosticTurnRequest):
                 concept_id=None,
                 description=data["confirmed_misconception"][:500],
                 evidence=req.original_question[:500],
+                topic_id=req.topic_id,
             )
             conn.commit()
         finally:
@@ -686,7 +952,8 @@ class FeedbackRequest(BaseModel):
 
 
 @app.post("/api/feedback")
-def feedback(req: FeedbackRequest):
+def feedback(req: FeedbackRequest, request: Request):
+    req.student_id = request.state.username
     conn = connect(_settings().database_url)
     try:
         student = StudentStore(conn)
@@ -701,6 +968,8 @@ def feedback(req: FeedbackRequest):
                 "selected_item_ids": req.selected_item_ids,
             },
         )
+        # Thumbs feedback is an outcome reward (+1 / -1) on the captured turn.
+        TraceStore(conn).attach_reward(req.student_id, float(req.rating))
         conn.commit()
     finally:
         conn.close()
@@ -731,9 +1000,11 @@ def student_progress(student_id: str):
         by_topic: dict[str, list] = {}
         for m in mastery:
             meta = id_to_meta.get(m.concept_id, {"title": m.concept_id, "topic_id": "?"})
+            # Decay-on-read: knowledge fades since it was last reinforced.
+            eff = effective_score(m.score, m.confidence, m.last_updated)
             by_topic.setdefault(meta["topic_id"], []).append({
                 "concept_title": meta["title"],
-                "score": m.score,
+                "score": round(eff, 3),
                 "confidence": m.confidence,
             })
 
@@ -758,6 +1029,102 @@ def student_progress(student_id: str):
             for m in student.active_misconceptions(student_id)
         ]
         return {"topics": topic_summaries, "misconceptions": misconceptions}
+    finally:
+        conn.close()
+
+
+@app.get("/api/student/{student_id}/review")
+def student_review(student_id: str):
+    """Concepts due for spaced-repetition review, with title + topic for display."""
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(student_id)
+        due_ids = student.due_for_review(student_id)
+        if not due_ids:
+            return {"due": []}
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id::text AS id, title, topic_id FROM semantic_items WHERE id::text = ANY(%s)",
+                (due_ids,),
+            )
+            meta = {r["id"]: r for r in cur.fetchall()}
+        due = [
+            {
+                "concept_id": cid,
+                "title": meta.get(cid, {}).get("title", cid),
+                "topic_id": meta.get(cid, {}).get("topic_id"),
+            }
+            for cid in due_ids
+        ]
+        return {"due": due}
+    finally:
+        conn.close()
+
+
+@app.get("/api/student/{student_id}/profile")
+def student_profile_view(student_id: str):
+    """The always-on learner profile: what the tutor has adapted to for this user."""
+    conn = connect(_settings().database_url)
+    try:
+        return build_profile(conn, student_id).to_dict()
+    finally:
+        conn.close()
+
+
+@app.get("/api/student/{student_id}/traces/summary")
+def traces_summary(student_id: str):
+    """How much personalization data has been captured for this user."""
+    conn = connect(_settings().database_url)
+    try:
+        store = TraceStore(conn)
+        recent = [
+            {
+                "task_text": r["task_text"],
+                "task_type": r["task_type"],
+                "n_selected": r["n_selected"],
+                "reward": r["reward"],
+                "occurred_at": str(r["occurred_at"]),
+            }
+            for r in store.recent(student_id, limit=20)
+        ]
+        return {"count": store.count(student_id), "recent": recent}
+    finally:
+        conn.close()
+
+
+@app.get("/api/student/{student_id}/traces/export")
+def traces_export(student_id: str, min_reward: Optional[float] = None, format: str = "router"):
+    """Export this user's captured turns as fine-tune-ready JSONL.
+
+    format=router → Trajectory selection-training records;
+    format=tutor  → rich records keeping the reply + reward.
+    """
+    conn = connect(_settings().database_url)
+    try:
+        store = TraceStore(conn)
+        if format == "tutor":
+            rows = [json.dumps(r, default=str) for r in store.export_records(student_id, min_reward=min_reward)]
+        else:
+            rows = [json.dumps(t.model_dump(), default=str) for t in store.export_trajectories(student_id, min_reward=min_reward)]
+        body = "\n".join(rows)
+        return PlainTextResponse(
+            body,
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": f'attachment; filename="{student_id}-trajectories.jsonl"'},
+        )
+    finally:
+        conn.close()
+
+
+@app.delete("/api/student/{student_id}/traces")
+def traces_delete(student_id: str):
+    """Consent control: erase all captured personalization data for this user."""
+    conn = connect(_settings().database_url)
+    try:
+        n = TraceStore(conn).delete_for_student(student_id)
+        conn.commit()
+        return {"deleted": n}
     finally:
         conn.close()
 
@@ -924,10 +1291,14 @@ class ConversationMessagesResponse(BaseModel):
 
 
 @app.get("/api/conversations/{conversation_id}/messages", response_model=ConversationMessagesResponse)
-def conversation_messages(conversation_id: str):
+def conversation_messages(conversation_id: str, request: Request):
     conn = connect(_settings().database_url)
     try:
-        rows = ConversationStore(conn).messages(conversation_id)
+        store = ConversationStore(conn)
+        owner = store.owner(conversation_id)
+        if owner is not None and owner != request.state.username:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        rows = store.messages(conversation_id)
         msgs: list[StoredMessage] = []
         for r in rows:
             payload = r["payload"] or {}
@@ -956,7 +1327,8 @@ class CreateConversationResponse(BaseModel):
 
 
 @app.post("/api/conversations", response_model=CreateConversationResponse)
-def create_conversation(req: CreateConversationRequest):
+def create_conversation(req: CreateConversationRequest, request: Request):
+    req.student_id = request.state.username
     conn = connect(_settings().database_url)
     try:
         StudentStore(conn).ensure_student(req.student_id)
@@ -968,10 +1340,14 @@ def create_conversation(req: CreateConversationRequest):
 
 
 @app.delete("/api/conversations/{conversation_id}")
-def delete_conversation(conversation_id: str):
+def delete_conversation(conversation_id: str, request: Request):
     conn = connect(_settings().database_url)
     try:
-        ConversationStore(conn).delete(conversation_id)
+        store = ConversationStore(conn)
+        owner = store.owner(conversation_id)
+        if owner is not None and owner != request.state.username:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        store.delete(conversation_id)
         conn.commit()
         return {"ok": True}
     finally:

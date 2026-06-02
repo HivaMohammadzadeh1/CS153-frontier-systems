@@ -24,6 +24,8 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body class="antialiased">
@@ -41,6 +43,7 @@
       <button class="nav-item" data-view="chat"     title="Chat">     <span class="nav-ico">💬</span><span class="nav-label">Chat</span></button>
       <button class="nav-item" data-view="progress" title="Progress"> <span class="nav-ico">📊</span><span class="nav-label">Progress</span></button>
       <button class="nav-item" data-view="path"     title="Path">     <span class="nav-ico">🎯</span><span class="nav-label">Path</span></button>
+      <button class="nav-item" data-view="yourai"   title="Your AI">  <span class="nav-ico">🧠</span><span class="nav-label">Your AI</span></button>
     </div>
 
     <div class="rail-foot">
@@ -51,8 +54,9 @@
       <details id="settingsMenu" class="rail-menu">
         <summary class="rail-btn" title="Settings">⚙️</summary>
         <div class="rail-popover">
-          <label class="field-label">Student ID</label>
-          <input id="studentIdInput" type="text" value="Hiva" class="field-input" />
+          <label class="field-label">Signed in as</label>
+          <div id="authUserTag" class="auth-user-tag">—</div>
+          <button id="logoutBtn" class="btn btn-ghost btn-sm" style="width:100%;margin-top:10px">Log out</button>
         </div>
       </details>
     </div>
@@ -79,6 +83,9 @@
         </details>
         <select id="topicSelect" class="topic-select" title="Focus a topic">
           <option value="">All topics</option>
+        </select>
+        <select id="routerSelect" class="topic-select" title="Context router backend">
+          <option value="">Router: Heuristic</option>
         </select>
         <div class="topbar-spacer"></div>
         <button id="newChatTopBtn" class="topbar-btn" title="New chat">＋ New</button>
@@ -117,6 +124,9 @@
 
     <!-- PATH --------------------------------------------------------- -->
     <section id="view-path" class="view" data-view="path"></section>
+
+    <!-- YOUR AI ------------------------------------------------------ -->
+    <section id="view-yourai" class="view" data-view="yourai"></section>
   </main>
 
   <!-- ── Routing modal (per-answer context) ──────────────────────── -->
@@ -136,6 +146,27 @@
 
   <!-- Toast layer (level-up / streak) -->
   <div id="toastLayer" class="toast-layer"></div>
+
+  <!-- ── Auth gate (sign in / sign up) ────────────────────────────── -->
+  <div id="authGate" class="auth-gate hidden">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-word">Memex</span></div>
+      <h1 class="auth-title">Your ML systems tutor</h1>
+      <p class="auth-sub">Sign in so your progress, memory, and history are saved to you.</p>
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" data-tab="login">Sign in</button>
+        <button type="button" class="auth-tab" data-tab="signup">Sign up</button>
+      </div>
+      <form id="authForm" class="auth-form" autocomplete="on">
+        <input id="authUsername" class="field-input" placeholder="Username or email" autocomplete="username" required />
+        <input id="authEmail" class="field-input auth-signup-only hidden" type="email" placeholder="Email" autocomplete="email" />
+        <input id="authPassword" class="field-input" type="password" placeholder="Password" autocomplete="current-password" required />
+        <div id="authError" class="auth-error hidden"></div>
+        <button id="authSubmit" class="btn btn-primary" type="submit" style="width:100%">Sign in</button>
+      </form>
+      <p class="auth-fineprint">Demo accounts only — please don't reuse a real password.</p>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

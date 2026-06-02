@@ -45,9 +45,17 @@ def main(
             q_emb = embedder.embed_one(question)
             candidates = semantic.vector_search(query=q_emb, k=20)
 
-        misconceptions = {
-            m["id"] for m in student.active_misconceptions(student_id)
-        }
+        active_misc = student.active_misconceptions(student_id)
+        misc_concept_ids = {m["concept_id"] for m in active_misc if m.get("concept_id")}
+        misc_topics: set[str] = set()
+        if misc_concept_ids:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT topic_id FROM semantic_items WHERE id::text = ANY(%s)",
+                    (list(misc_concept_ids),),
+                )
+                misc_topics = {r["topic_id"] for r in cur.fetchall()}
+        due_concept_ids = set(student.due_for_review(student_id))
 
         prereq_titles: set[str] = set()
         if topic_id:
@@ -68,10 +76,12 @@ def main(
             student_id=student_id,
             question=question,
             candidates=candidates,
-            active_misconceptions=misconceptions,
+            misconception_concept_ids=misc_concept_ids,
+            misconception_topics=misc_topics,
             prerequisites=prereq_titles,
             recent_ids=set(),
             reuse_counts={},
+            due_concept_ids=due_concept_ids,
             budget=budget,
         )
 

@@ -14,6 +14,7 @@ const state = {
   conversationId: null,
   conversations: [],
   view: "home",
+  router: "",        // "" = heuristic; else a finetuned size id
 };
 
 const TOPIC_MAP = {};   // id -> { title, area }
@@ -199,17 +200,43 @@ function renderStreak() { const el = $("streakCount"); if (el) el.textContent = 
 mermaid.initialize({ startOnLoad: false, theme: "neutral", fontFamily: "Inter, system-ui, sans-serif" });
 marked.setOptions({ breaks: true, gfm: true });
 
+function _renderTex(tex, display) {
+  if (typeof katex === "undefined") return esc(tex);
+  try {
+    return katex.renderToString(tex.trim(), { displayMode: display, throwOnError: false, strict: false });
+  } catch (_) {
+    return `<code>${esc(tex)}</code>`;
+  }
+}
+
 function renderMarkdown(text) {
-  const blocks = [];
-  const ph = (i) => `MERMAID_PLACEHOLDER_${i}`;
-  const withPh = text.replace(/```mermaid\s*([\s\S]*?)```/g, (_, code) => {
-    blocks.push(code.trim());
-    return `\n${ph(blocks.length - 1)}\n`;
+  // 1) Pull mermaid + math out BEFORE markdown parsing so the parser can't mangle
+  //    LaTeX (underscores, backslashes, braces). Each becomes an inert placeholder.
+  const mermaidBlocks = [];
+  const mph = (i) => `MERMAIDPLACEHOLDER${i}ENDPH`;
+  let src = text.replace(/```mermaid\s*([\s\S]*?)```/g, (_, code) => {
+    mermaidBlocks.push(code.trim());
+    return `\n${mph(mermaidBlocks.length - 1)}\n`;
   });
-  let html = DOMPurify.sanitize(marked.parse(withPh));
-  blocks.forEach((code, i) => {
+
+  const math = [];
+  const xph = (i) => `MATHPLACEHOLDER${i}ENDPH`;
+  const push = (tex, display) => { math.push({ tex, display }); return xph(math.length - 1); };
+  src = src.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => push(t, true));     // $$ … $$
+  src = src.replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => push(t, true));     // \[ … \]
+  src = src.replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => push(t, false));    // \( … \)
+  src = src.replace(/\\begin\{([a-z*]+)\}[\s\S]+?\\end\{\1\}/gi, (m) => push(m, true)); // bare env
+  src = src.replace(/\$([^$\n]+?)\$/g, (_, t) => push(t, false));        // $ … $ (inline)
+
+  let html = DOMPurify.sanitize(marked.parse(src));
+
+  mermaidBlocks.forEach((code, i) => {
     const safe = DOMPurify.sanitize(code, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
-    html = html.replace(new RegExp(`<p>${ph(i)}</p>|${ph(i)}`, "g"), `<pre class="mermaid">${safe}</pre>`);
+    html = html.replace(new RegExp(`<p>${mph(i)}</p>|${mph(i)}`, "g"), () => `<pre class="mermaid">${safe}</pre>`);
+  });
+  math.forEach((m, i) => {
+    const rendered = _renderTex(m.tex, m.display);   // KaTeX output is XSS-safe
+    html = html.replace(new RegExp(`<p>${xph(i)}</p>|${xph(i)}`, "g"), () => rendered);
   });
   return html;
 }
@@ -228,7 +255,7 @@ function substituteCitations(text, references) {
 }
 
 // ── Router / views ─────────────────────────────────────────────
-const VIEWS = ["home", "profile", "chat", "progress", "path"];
+const VIEWS = ["home", "profile", "chat", "progress", "path", "yourai"];
 
 function showView(name, pushHash = true) {
   if (!VIEWS.includes(name)) name = "home";
@@ -242,6 +269,7 @@ function showView(name, pushHash = true) {
   else if (name === "profile") renderProfile();
   else if (name === "progress") renderProgress();
   else if (name === "path") renderPath();
+  else if (name === "yourai") renderYourAI();
   else if (name === "chat") $("msgInput")?.focus();
 }
 
@@ -289,6 +317,17 @@ async function loadActivity(force = false) {
   } catch (_) { return _activityCache; }
 }
 
+let _reviewCache = null;
+async function loadReview(force = false) {
+  if (!force && _reviewCache) return _reviewCache;
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/review`);
+    if (!r.ok) return _reviewCache;
+    _reviewCache = await r.json();
+    return _reviewCache;
+  } catch (_) { return _reviewCache; }
+}
+
 // Derived rollups from progress + topic catalog.
 function deriveSummary(data) {
   const topics = (data && data.topics) || [];
@@ -327,8 +366,9 @@ function topicTitle(id) { return TOPIC_MAP[id]?.title || id; }
 // ── Home view ──────────────────────────────────────────────────
 async function renderHome() {
   const el = $("view-home");
-  const [data, act] = await Promise.all([loadProgress(true), loadActivity(true)]);
+  const [data, act, review] = await Promise.all([loadProgress(true), loadActivity(true), loadReview(true)]);
   const s = deriveSummary(data);
+  const dueList = (review && review.due) || [];
   const ast = (act && act.stats) || {};
   const streak = currentStreak();
   const overallPct = Math.round(s.overall * 100);
@@ -405,6 +445,23 @@ async function renderHome() {
     ? `Welcome back — you're on a <b>${streak}-day</b> streak.`
     : `Welcome to Memex.`;
 
+  let reviewHtml = "";
+  if (dueList.length) {
+    const first = dueList[0];
+    const more = dueList.length > 1 ? ` +${dueList.length - 1} more` : "";
+    reviewHtml = `
+      <div style="height:1px;background:var(--border)"></div>
+      <div class="tile">
+        <div class="tile-ico">🔁</div>
+        <div class="tile-body">
+          <div class="tile-kicker">Due for review</div>
+          <div class="tile-title">${esc(first.title)}${more}</div>
+          <div class="tile-sub">Spaced repetition — revisit before it fades</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-seed="${esc(first.topic_id || "")}">Review</button>
+      </div>`;
+  }
+
   el.innerHTML = `
     <div class="view-inner">
       <div class="view-head">
@@ -432,6 +489,7 @@ async function renderHome() {
           ${upNextHtml}
           <div style="height:1px;background:var(--border)"></div>
           ${weakHtml}
+          ${reviewHtml}
         </div>
       </div>
 
@@ -707,6 +765,118 @@ async function renderPath() {
   el.querySelectorAll("[data-seed]").forEach((b) => b.addEventListener("click", () => seedChat(b.dataset.seed)));
 }
 
+// ── Your AI view (personalization + captured data) ─────────────
+async function loadProfile() {
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/profile`);
+    return r.ok ? await r.json() : null;
+  } catch (_) { return null; }
+}
+async function loadTraceSummary() {
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/traces/summary`);
+    return r.ok ? await r.json() : null;
+  } catch (_) { return null; }
+}
+
+function chipList(items, cls) {
+  if (!items || !items.length) return `<span class="view-subtitle">None yet.</span>`;
+  return items.map((t) => `<span class="chip ${cls}" style="margin:0 6px 6px 0">${esc(t)}</span>`).join("");
+}
+
+async function renderYourAI() {
+  const el = $("view-yourai");
+  const [profile, traces] = await Promise.all([loadProfile(), loadTraceSummary()]);
+  const p = profile || {};
+  const overallPct = Math.round((p.overall_mastery || 0) * 100);
+  const count = (traces && traces.count) || 0;
+  const recent = (traces && traces.recent) || [];
+
+  const rewardDot = (r) => {
+    if (r == null) return `<span class="rd rd-none" title="No outcome yet"></span>`;
+    const cls = r >= 0.6 ? "rd-good" : r > 0 ? "rd-warn" : "rd-bad";
+    return `<span class="rd ${cls}" title="reward ${r}"></span>`;
+  };
+  const recentHtml = recent.length
+    ? recent.slice(0, 10).map((t) => `
+        <div class="tl-item">
+          ${rewardDot(t.reward)}
+          <div class="tl-body">
+            <div class="tl-label">${esc(t.task_text)}</div>
+            <div class="tl-meta">${t.n_selected} item${t.n_selected === 1 ? "" : "s"} selected · ${formatRelative(t.occurred_at)}</div>
+          </div>
+        </div>`).join("")
+    : `<p class="view-subtitle">No turns captured yet — ask the tutor something and it starts learning your style.</p>`;
+
+  el.innerHTML = `
+    <div class="view-inner">
+      <div class="view-head">
+        <div class="view-eyebrow">Your AI</div>
+        <h1 class="view-title">What Memex has learned about you</h1>
+        <p class="view-subtitle">Memex adapts to you every turn — and remembers your context so it can be fine-tuned to teach <em>you</em> better over time.</p>
+      </div>
+
+      <div class="grid-cards grid-2">
+        <div class="card">
+          <div class="ring-wrap">
+            <div class="ring" id="aiRing"><span class="ring-val"><span id="aiRingVal">0</span><small>%</small></span></div>
+            <div>
+              <div class="tile-kicker">Overall mastery</div>
+              <div style="font-family:var(--font-display);font-size:22px;font-weight:600;margin:2px 0 10px">${overallPct ? overallPct + "% there" : "Just getting started"}</div>
+              <div class="tile-kicker" style="margin-bottom:6px">💪 Strengths</div>
+              <div>${chipList(p.strengths, "chip-area")}</div>
+              <div class="tile-kicker" style="margin:12px 0 6px">🎯 Working on</div>
+              <div>${chipList(p.weaknesses, "chip-area")}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card grid-cards" style="gap:16px">
+          <div class="tile">
+            <div class="tile-ico">📦</div>
+            <div class="tile-body">
+              <div class="tile-kicker">Personalization data captured</div>
+              <div class="tile-title"><span data-count="${count}">0</span> learning trace${count === 1 ? "" : "s"}</div>
+              <div class="tile-sub">Each turn (your question, the context chosen, the reply, and how it landed) is saved to fine-tune on.</div>
+            </div>
+          </div>
+          <div>
+            <div class="tile-kicker" style="margin-bottom:6px">⚠️ Active misconceptions</div>
+            <div>${(p.misconceptions && p.misconceptions.length) ? p.misconceptions.map((m) => `<div style="display:flex;gap:8px;font-size:12.5px;color:var(--text-muted);margin:5px 0"><span style="color:var(--warn)">⚠</span><span>${esc(m)}</span></div>`).join("") : `<span class="view-subtitle">None flagged.</span>`}</div>
+            <div class="tile-kicker" style="margin:12px 0 6px">🔁 Due for review</div>
+            <div>${chipList(p.due_for_review, "chip-area")}</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
+            <button class="btn btn-ghost btn-sm" id="aiExport">⬇ Export my data (JSONL)</button>
+            <button class="btn btn-ghost btn-sm" id="aiReset" style="color:var(--bad)">Reset my data</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-label">Recently captured turns</div>
+      <div class="card"><div class="timeline">${recentHtml}</div></div>
+    </div>`;
+
+  requestAnimationFrame(() => {
+    const ring = $("aiRing");
+    if (ring) ring.style.setProperty("--val", overallPct);
+    countUp($("aiRingVal"), overallPct);
+    el.querySelectorAll("[data-count]").forEach((n) => countUp(n, parseInt(n.dataset.count, 10)));
+  });
+
+  $("aiExport")?.addEventListener("click", () => {
+    window.open(`/api/student/${encodeURIComponent(state.studentId)}/traces/export`, "_blank");
+  });
+  $("aiReset")?.addEventListener("click", async () => {
+    if (!confirm("Erase all captured personalization data for this user? This can't be undone.")) return;
+    try {
+      await fetch(`/api/student/${encodeURIComponent(state.studentId)}/traces`, { method: "DELETE" });
+      toast("🧹 <span class=\"t-grad\">Your data was reset.</span>");
+      renderYourAI();
+    } catch (_) {}
+  });
+}
+
 // ── Conversation list ──────────────────────────────────────────
 function formatRelative(iso) {
   if (!iso) return "";
@@ -741,12 +911,12 @@ function renderConversationList() {
     el.appendChild(item);
   }
 }
-async function loadConversation(conversationId) {
+async function loadConversation(conversationId, { switchView = true } = {}) {
   state.conversationId = conversationId;
   state.messages = []; state.reuseCounts = {};
   $("chat").innerHTML = "";
   $("welcome").classList.add("hidden");
-  showView("chat");
+  if (switchView) showView("chat");
   try {
     const r = await fetch(`/api/conversations/${conversationId}/messages`);
     if (!r.ok) return;
@@ -813,6 +983,10 @@ function appendAssistantMessage(msg, msgIdx) {
   const citedText = substituteCitations(msg.content, msg.references);
   const bodyHtml = renderMarkdown(citedText);
 
+  const thinkHtml = (msg.thinking && msg.thinking.trim())
+    ? `<details class="thinking-box"><summary>💭 Thought process</summary><div class="thinking-content">${esc(msg.thinking)}</div></details>`
+    : "";
+
   let refsHtml = "";
   if (msg.references && msg.references.length) {
     const items = msg.references.map((r) =>
@@ -824,6 +998,7 @@ function appendAssistantMessage(msg, msgIdx) {
   }
 
   row.innerHTML = `
+    ${thinkHtml}
     <div class="prose-chat">${bodyHtml}</div>
     ${refsHtml}
     <div class="msg-footer">
@@ -866,7 +1041,6 @@ async function sendMessage(text) {
   showView("chat");
   $("welcome").classList.add("hidden");
 
-  state.studentId = $("studentIdInput").value.trim() || "Hiva";
   state.topicId = $("topicSelect").value || null;
 
   state.messages.push({ role: "user", content: text });
@@ -876,32 +1050,95 @@ async function sendMessage(text) {
   const thinking = showThinking();
   setInputLocked(true);
 
+  // A live bubble: the model's thinking streams into a collapsible box, then the
+  // answer fills below. On completion the whole row is re-rendered (markdown,
+  // citations, footer) with the thinking preserved as a collapsed details.
+  let streamRow = null, streamBody = null, thinkContent = null, acc = "", thinkAcc = "";
+  function ensureRow() {
+    if (streamRow) return;
+    thinking.remove();
+    streamRow = document.createElement("div");
+    streamRow.className = "msg-row assistant";
+    $("chat").appendChild(streamRow);
+  }
+  function ensureThink() {
+    ensureRow();
+    if (thinkContent) return;
+    const tb = document.createElement("details");
+    tb.className = "thinking-box"; tb.open = true;
+    tb.innerHTML = '<summary>💭 Thinking…</summary><div class="thinking-content"></div>';
+    streamRow.appendChild(tb);
+    thinkContent = tb.querySelector(".thinking-content");
+  }
+  function ensureBody() {
+    ensureRow();
+    if (streamBody) return;
+    streamBody = document.createElement("div");
+    streamBody.className = "prose-chat streaming";
+    streamRow.appendChild(streamBody);
+  }
+
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/chat/stream", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         student_id: state.studentId, conversation_id: state.conversationId,
         topic_id: state.topicId, question: text, budget: state.budget, reuse_counts: state.reuseCounts,
+        router: state.router || null,
       }),
     });
-    thinking.remove();
-    if (!res.ok) { appendError(await res.text()); return; }
-    const data = await res.json();
-    if (data.conversation_id) state.conversationId = data.conversation_id;
-    data.selected?.forEach((it) => { state.reuseCounts[it.id] = (state.reuseCounts[it.id] || 0) + 1; });
+    if (!res.ok || !res.body) { thinking.remove(); appendError(await res.text().catch(() => "stream failed")); return; }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", done = null;
+    while (true) {
+      const { value, done: rdone } = await reader.read();
+      if (rdone) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, nl); buf = buf.slice(nl + 2);
+        if (!frame.startsWith("data:")) continue;
+        let payload;
+        try { payload = JSON.parse(frame.slice(5).trim()); } catch (_) { continue; }
+        if (payload.thinking != null) {
+          ensureThink();
+          thinkAcc += payload.thinking;
+          thinkContent.textContent = thinkAcc;
+          scrollBottom();
+        } else if (payload.delta != null) {
+          ensureBody();
+          acc += payload.delta;
+          streamBody.textContent = acc;   // raw text while streaming (safe)
+          scrollBottom();
+        } else if (payload.error) {
+          thinking.remove(); streamRow?.remove();
+          appendError(payload.error); return;
+        } else if (payload.done) {
+          done = payload;
+        }
+      }
+    }
+    thinking.remove(); streamRow?.remove();
+    if (!done) { appendError("No response received."); return; }
+
+    if (done.conversation_id) state.conversationId = done.conversation_id;
+    done.selected?.forEach((it) => { state.reuseCounts[it.id] = (state.reuseCounts[it.id] || 0) + 1; });
 
     const msgIdx = state.messages.length;
-    const aMsg = { role: "assistant", content: data.reply, references: data.references, selected: data.selected, dropped: data.dropped, tokens_used: data.tokens_used };
+    const aMsg = { role: "assistant", content: done.reply, references: done.references, selected: done.selected, dropped: done.dropped, tokens_used: done.tokens_used, router: done.router, thinking: thinkAcc || null };
     state.messages.push(aMsg);
-    appendAssistantMessage(aMsg, msgIdx);
+    appendAssistantMessage(aMsg, msgIdx);   // final render: markdown + citations + mermaid + footer
     scrollBottom();
 
     bumpStreak();
     loadConversations();
     loadProgress(true);
     loadActivity(true);
+    loadReview(true);
   } catch (err) {
-    thinking.remove();
+    thinking.remove(); streamRow?.remove();
     appendError(err.message);
   } finally {
     setInputLocked(false); $("msgInput").focus();
@@ -934,7 +1171,9 @@ function openRoutingModal(msg) {
   const body = $("routingBody");
   const sel = msg.selected || [], dropped = msg.dropped || [];
 
-  let html = `<p class="view-subtitle" style="margin:0 0 14px">The tutor picked these memory items to answer you, scored by relevance, recency, your misconceptions, prerequisites, and reuse.</p>`;
+  const ftRouter = msg.router && msg.router !== "heuristic";
+  const routerLabel = ftRouter ? `Fine-tuned router (${esc(msg.router)})` : "Heuristic engine";
+  let html = `<p class="view-subtitle" style="margin:0 0 14px">Selected by <b>${routerLabel}</b>. ${ftRouter ? "These are the items the fine-tuned model chose for this answer." : "Scored by relevance, recency, your misconceptions, prerequisites, and reuse."}</p>`;
 
   if (sel.length) {
     html += `<p class="tile-kicker" style="margin-bottom:8px">Selected (${sel.length})</p>`;
@@ -1056,7 +1295,7 @@ async function continueDiagnostic(card, originalQuestion, diagData, turnIndex) {
   const result = card.querySelector(".diag-result");
   result.innerHTML = `<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ember)"><div class="thinking-dots"><span></span><span></span><span></span></div> Thinking…</div>`;
   try {
-    const res = await fetch("/api/diagnostic/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, original_question: originalQuestion, diagnosis: diagData.diagnosis, follow_up_question: diagData.follow_up_question, student_answer: answer, turn_index: turnIndex }) });
+    const res = await fetch("/api/diagnostic/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, original_question: originalQuestion, diagnosis: diagData.diagnosis, follow_up_question: diagData.follow_up_question, student_answer: answer, turn_index: turnIndex, topic_id: state.topicId || $("topicSelect").value || null }) });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     result.innerHTML = `<div class="prose-chat" style="margin-bottom:12px">${renderMarkdown(data.next_message || data.explanation || "")}</div>`;
@@ -1112,15 +1351,8 @@ $("sendBtn").addEventListener("click", () => sendMessage());
 $("newChatBtn").addEventListener("click", () => { startNewChatLocal(); $("historyMenu").removeAttribute("open"); showView("chat"); });
 $("newChatTopBtn").addEventListener("click", () => { startNewChatLocal(); showView("chat"); });
 
-$("studentIdInput").addEventListener("change", (e) => {
-  state.studentId = e.target.value.trim() || "you";
-  state.reuseCounts = {}; state.messages = []; state.conversationId = null;
-  _progressCache = null; _activityCache = null;
-  $("chat").innerHTML = ""; $("welcome").classList.remove("hidden");
-  loadConversations();
-  if (state.view !== "chat") showView(state.view, false);
-});
 $("topicSelect").addEventListener("change", (e) => { state.topicId = e.target.value || null; });
+$("routerSelect").addEventListener("change", (e) => { state.router = e.target.value || ""; });
 
 $("routingClose").addEventListener("click", closeRoutingModal);
 $("routingBackdrop").addEventListener("click", closeRoutingModal);
@@ -1130,10 +1362,74 @@ $("welcomeBackOpenMemory").addEventListener("click", () => showView("progress"))
 
 window.addEventListener("hashchange", routeFromHash);
 
+async function loadRouters() {
+  try {
+    const r = await fetch("/api/routers");
+    if (!r.ok) return;
+    const d = await r.json();
+    const sel = $("routerSelect");
+    if (!sel) return;
+    const labels = { qwen2_5_0_5b: "0.5B", qwen2_5_1_5b: "1.5B", qwen2_5_3b: "3B", qwen2_5_7b: "7B" };
+    (d.finetuned || []).forEach((id) => {
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = id === "remote" ? "Router: Hosted (vLLM)" : "Router: Finetuned " + (labels[id] || id);
+      sel.appendChild(o);
+    });
+  } catch (_) {}
+}
+
+// ── Auth gate ──────────────────────────────────────────────────
+const auth = { mode: "login" };
+function setAuthMode(mode) {
+  auth.mode = mode;
+  document.querySelectorAll(".auth-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === mode));
+  document.querySelectorAll(".auth-signup-only").forEach((el) => el.classList.toggle("hidden", mode !== "signup"));
+  $("authSubmit").textContent = mode === "signup" ? "Create account" : "Sign in";
+  $("authUsername").placeholder = mode === "signup" ? "Username" : "Username or email";
+  $("authError").classList.add("hidden");
+}
+async function submitAuth(e) {
+  e.preventDefault();
+  const u = $("authUsername").value.trim(), em = $("authEmail").value.trim(), pw = $("authPassword").value;
+  const err = $("authError");
+  err.classList.add("hidden");
+  try {
+    const res = auth.mode === "signup"
+      ? await fetch("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, email: em, password: pw }) })
+      : await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login: u, password: pw }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Something went wrong"); }
+    onLoggedIn((await res.json()).username);
+  } catch (e2) { err.textContent = e2.message; err.classList.remove("hidden"); }
+}
+function onLoggedIn(username) {
+  state.studentId = username;
+  const tag = $("authUserTag"); if (tag) tag.textContent = username;
+  $("authGate").classList.add("hidden");
+  renderStreak();
+  bootApp();
+}
+async function logout() {
+  try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) {}
+  location.reload();
+}
+
+async function bootApp() {
+  await loadTopics();
+  await loadRouters();
+  await loadConversations();
+  // Resume the user's most recent conversation so logging back in picks up
+  // exactly where they left off (their data is persisted server-side per user).
+  if (state.conversations.length) {
+    await loadConversation(state.conversations[0].id, { switchView: false });
+  }
+  await maybeShowWelcomeBack();
+  routeFromHash();   // default #/home
+}
+
 // ── Init ───────────────────────────────────────────────────────
 (async () => {
   applyTheme(document.documentElement.getAttribute("data-theme") || "light");
-  renderStreak();
   buildStarterGrid();
   const SUBS = [
     "Ask anything about ML systems engineering.",
@@ -1144,8 +1440,16 @@ window.addEventListener("hashchange", routeFromHash);
   ];
   const subEl = document.querySelector(".welcome-sub");
   if (subEl) subEl.textContent = SUBS[Math.floor(Math.random() * SUBS.length)];
-  await loadTopics();
-  await loadConversations();
-  await maybeShowWelcomeBack();
-  routeFromHash();   // default #/home
+
+  document.querySelectorAll(".auth-tab").forEach((t) => t.addEventListener("click", () => setAuthMode(t.dataset.tab)));
+  $("authForm").addEventListener("submit", submitAuth);
+  $("logoutBtn")?.addEventListener("click", logout);
+  setAuthMode("login");
+
+  // Gate the app behind a session.
+  try {
+    const r = await fetch("/api/auth/me");
+    if (r.ok) onLoggedIn((await r.json()).username);
+    else $("authGate").classList.remove("hidden");
+  } catch (_) { $("authGate").classList.remove("hidden"); }
 })();

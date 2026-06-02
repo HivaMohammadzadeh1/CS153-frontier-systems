@@ -39,49 +39,22 @@ class TutorAgent:
         self.embedder = embedder
         self.logger = logger
 
-    def answer(
-        self,
-        *,
-        student_id: str,
+    @staticmethod
+    def build_prompt(
         question: str,
-        candidates: list[MemoryItem],
-        active_misconceptions: set[str],
-        prerequisites: set[str],
-        recent_ids: set[str],
-        reuse_counts: dict[str, int],
-        budget: int,
+        selected: list[MemoryItem],
+        *,
         weak_concepts: list[str] | None = None,
         strong_concepts: list[str] | None = None,
         active_misconception_texts: list[str] | None = None,
-    ) -> AgentResponse:
-        task_emb = self.embedder.embed_one(question)
-        decision = self.engine.route(
-            candidates=candidates,
-            task_embedding=task_emb,
-            active_misconceptions=active_misconceptions,
-            prerequisites=prerequisites,
-            recent_ids=recent_ids,
-            reuse_counts=reuse_counts,
-            budget=budget,
-        )
-        self.logger.log(
-            {
-                "event": "routing_decision",
-                "agent": "tutor",
-                "student_id": student_id,
-                "task": question,
-                "selected_ids": [it.id for it in decision.selected],
-                "dropped_ids": [it.id for it in decision.dropped],
-                "tokens_used": decision.tokens_used,
-                "budget": decision.budget,
-            }
-        )
+        due_concepts: list[str] | None = None,
+    ) -> tuple[str, str]:
+        """Build (system, user) prompts from selected context + the student profile.
 
-        context_block = "\n\n".join(
-            f"[{it.id}] {it.title}\n{it.body}" for it in decision.selected
-        )
-
-        # Build optional student profile block
+        Shared by answer() and the streaming endpoint so both produce an identical
+        prompt for a given selection.
+        """
+        context_block = "\n\n".join(f"[{it.id}] {it.title}\n{it.body}" for it in selected)
         profile_parts = []
         if weak_concepts:
             profile_parts.append(f"- Mastery is LOW for: {', '.join(weak_concepts)}")
@@ -91,16 +64,84 @@ class TutorAgent:
             profile_parts.append(
                 f"- Active misconceptions to address: {'; '.join(active_misconception_texts)}"
             )
-
-        if profile_parts:
-            profile_block = "STUDENT PROFILE:\n" + "\n".join(profile_parts) + "\n\n"
-        else:
-            profile_block = ""
-
+        if due_concepts:
+            profile_parts.append(
+                f"- Due for review (refresh gently if relevant): {', '.join(due_concepts)}"
+            )
+        profile_block = ("STUDENT PROFILE:\n" + "\n".join(profile_parts) + "\n\n") if profile_parts else ""
         user_prompt = f"{profile_block}CONTEXT ITEMS:\n{context_block}\n\nSTUDENT QUESTION:\n{question}"
-        text = self.llm.complete(
-            system=TUTOR_SYSTEM, user=user_prompt, max_tokens=1024
+        return TUTOR_SYSTEM, user_prompt
+
+    def answer(
+        self,
+        *,
+        student_id: str,
+        question: str,
+        candidates: list[MemoryItem],
+        misconception_concept_ids: set[str] | None = None,
+        misconception_topics: set[str] | None = None,
+        prerequisites: set[str],
+        recent_ids: set[str],
+        reuse_counts: dict[str, int],
+        due_concept_ids: set[str] | None = None,
+        budget: int,
+        weak_concepts: list[str] | None = None,
+        strong_concepts: list[str] | None = None,
+        active_misconception_texts: list[str] | None = None,
+        due_concepts: list[str] | None = None,
+        preselected_items: list[MemoryItem] | None = None,
+    ) -> AgentResponse:
+        # When a context selection is supplied (e.g. by a fine-tuned router),
+        # use it directly and skip the heuristic engine. Otherwise route.
+        if preselected_items is not None:
+            selected = preselected_items
+            tokens_used = sum((getattr(it, "token_estimate", 0) or 0) for it in selected)
+            self.logger.log(
+                {
+                    "event": "routing_decision",
+                    "agent": "tutor",
+                    "router": "preselected",
+                    "student_id": student_id,
+                    "task": question,
+                    "selected_ids": [it.id for it in selected],
+                    "tokens_used": tokens_used,
+                    "budget": budget,
+                }
+            )
+        else:
+            task_emb = self.embedder.embed_one(question)
+            decision = self.engine.route(
+                candidates=candidates,
+                task_embedding=task_emb,
+                misconception_concept_ids=misconception_concept_ids,
+                misconception_topics=misconception_topics,
+                prerequisites=prerequisites,
+                recent_ids=recent_ids,
+                reuse_counts=reuse_counts,
+                due_concept_ids=due_concept_ids,
+                budget=budget,
+            )
+            selected = decision.selected
+            tokens_used = decision.tokens_used
+            self.logger.log(
+                {
+                    "event": "routing_decision",
+                    "agent": "tutor",
+                    "student_id": student_id,
+                    "task": question,
+                    "selected_ids": [it.id for it in decision.selected],
+                    "dropped_ids": [it.id for it in decision.dropped],
+                    "tokens_used": decision.tokens_used,
+                    "budget": decision.budget,
+                }
+            )
+
+        system, user_prompt = self.build_prompt(
+            question, selected,
+            weak_concepts=weak_concepts, strong_concepts=strong_concepts,
+            active_misconception_texts=active_misconception_texts, due_concepts=due_concepts,
         )
+        text = self.llm.complete(system=system, user=user_prompt, max_tokens=1024)
 
         self.logger.log(
             {
@@ -111,5 +152,5 @@ class TutorAgent:
             }
         )
         return AgentResponse(
-            text=text, selected_items=decision.selected, tokens_used=decision.tokens_used
+            text=text, selected_items=selected, tokens_used=tokens_used
         )

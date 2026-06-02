@@ -486,7 +486,10 @@ details.refs > summary { cursor: pointer; color: var(--text-muted); font-size: 1
     width: auto; height: auto; position: fixed; inset: auto 0 0 0;
     flex-direction: row; align-items: center; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
     border-right: 0; border-top: 1px solid var(--border);
-    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    background: var(--surface);
+    /* clear the desktop backdrop-filter: it would create a containing block
+       and trap the position:fixed foot inside the bar instead of the viewport */
+    backdrop-filter: none;
     box-shadow: 0 -10px 30px -18px rgba(15,23,42,.5); gap: 0;
   }
   .rail-brand { display: none; }
@@ -494,10 +497,17 @@ details.refs > summary { cursor: pointer; color: var(--text-muted); font-size: 1
   .nav-item { flex-direction: column; gap: 3px; padding: 6px 4px; border-radius: 12px; font-size: 10.5px; font-weight: 600; flex: 1; }
   .nav-item.active { box-shadow: none; }
   .nav-item .nav-ico { font-size: 20px; width: auto; }
-  .nav-label { font-size: 10px; }
-  .rail-foot { margin: 0 0 0 4px; padding: 0; gap: 6px; flex-wrap: nowrap; }
-  .streak-chip { padding: 6px 9px; }
-  .rail-popover { bottom: 48px; left: auto; right: 0; }
+  .nav-label { font-size: 9.5px; }
+  /* Float the streak/theme/settings cluster to the top-right so the bottom
+     bar is just the nav tabs at full width (no crowding with 6 tabs). */
+  .rail-foot {
+    position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 10px;
+    margin: 0; padding: 5px 7px; gap: 6px; flex-wrap: nowrap; z-index: 31;
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter: blur(8px); border: 1px solid var(--border); border-radius: 999px;
+  }
+  .streak-chip { padding: 5px 9px; }
+  .rail-popover { top: 46px; bottom: auto; left: auto; right: 0; }
 
   .main { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
   .view-chat.active { height: 100vh; padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
@@ -548,6 +558,62 @@ details.refs > summary { cursor: pointer; color: var(--text-muted); font-size: 1
 
 /* Confetti overlay */
 #confettiCanvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 70; }
+
+/* Reward dots — "Your AI" captured-turns timeline */
+.rd { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+.rd-good { background: var(--good); box-shadow: 0 0 8px -1px var(--good); }
+.rd-warn { background: var(--warn); }
+.rd-bad  { background: var(--bad); }
+.rd-none { background: var(--surface-3); border: 1px solid var(--border-strong); }
+
+/* ── Auth gate ─────────────────────────────────────────────────────────── */
+.auth-gate {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px;
+  background:
+    radial-gradient(820px 560px at 12% -8%, var(--grad-soft), transparent 60%),
+    radial-gradient(720px 520px at 100% 110%, var(--grad-soft), transparent 55%),
+    var(--bg);
+}
+.auth-card {
+  width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 22px; padding: 30px 28px; box-shadow: var(--shadow-lg); animation: popIn .3s cubic-bezier(.22,1,.36,1);
+}
+.auth-brand { display: flex; align-items: center; gap: 11px; font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: -.025em; }
+.auth-brand .brand-word { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.auth-title { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 18px 0 4px; }
+.auth-sub { color: var(--text-muted); font-size: 14px; margin: 0 0 20px; }
+.auth-tabs { display: flex; gap: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 4px; margin-bottom: 16px; }
+.auth-tab { flex: 1; padding: 9px; border: 0; border-radius: 9px; background: transparent; color: var(--text-muted); font-weight: 600; font-size: 14px; cursor: pointer; font-family: inherit; transition: background .15s, color .15s; }
+.auth-tab.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); }
+.auth-form { display: flex; flex-direction: column; gap: 11px; }
+.auth-error { font-size: 13px; color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--border)); border-radius: 10px; padding: 9px 12px; }
+.auth-fineprint { text-align: center; font-size: 11.5px; color: var(--text-faint); margin: 16px 0 0; }
+.auth-user-tag { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--text); padding: 8px 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Extended-thinking box — the model's reasoning, collapsible. */
+.thinking-box {
+  margin: 0 0 12px; border: 1px dashed var(--border-strong); border-radius: 12px;
+  background: var(--surface-2); overflow: hidden;
+}
+.thinking-box > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  padding: 9px 13px; font-size: 12.5px; font-weight: 600; color: var(--text-muted);
+  font-family: var(--font-mono); letter-spacing: .02em;
+}
+.thinking-box > summary::-webkit-details-marker { display: none; }
+.thinking-box[open] > summary { border-bottom: 1px dashed var(--border); }
+.thinking-content {
+  padding: 11px 14px; font-size: 12.5px; line-height: 1.6; color: var(--text-muted);
+  white-space: pre-wrap; max-height: 320px; overflow-y: auto; font-family: var(--font-mono);
+}
+
+/* Streaming reply: show raw text with line breaks + a blinking caret. */
+.prose-chat.streaming { white-space: pre-wrap; }
+.prose-chat.streaming::after {
+  content: "▋"; margin-left: 1px; color: var(--accent);
+  animation: caret 1s steps(1) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }
 
 /* Respect reduced-motion preferences. */
 @media (prefers-reduced-motion: reduce) {
