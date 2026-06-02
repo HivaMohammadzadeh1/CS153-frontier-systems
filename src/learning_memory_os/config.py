@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     xtrace_base_url: str = Field(
         default="https://api.production.xtrace.ai", alias="XTRACE_BASE_URL"
     )
+    # Auth: set COOKIE_SECURE=true in production (HTTPS). Off for local http testing.
+    cookie_secure: bool = Field(default=False, alias="COOKIE_SECURE")
+    session_ttl_days: int = Field(default=30, alias="SESSION_TTL_DAYS")
 
 
 def get_settings() -> Settings:

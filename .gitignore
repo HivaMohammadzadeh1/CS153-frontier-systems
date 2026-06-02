@@ -9,5 +9,9 @@ logs/
 data/runtime/
 data/trajectories/*.jsonl
 data/router_checkpoints/
+data/merged/
+artifacts/
 tmp/
 *.pkg
+*.safetensors
+*.tar.gz

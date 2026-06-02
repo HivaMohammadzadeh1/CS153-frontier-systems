@@ -64,6 +64,16 @@ class ConversationStore:
             row = cur.fetchone()
             return row["title"] if row else None
 
+    def owner(self, conversation_id: str) -> str | None:
+        """The student_id that owns a conversation (for access-control checks)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT student_id FROM conversations WHERE id = %s::uuid",
+                (conversation_id,),
+            )
+            row = cur.fetchone()
+            return row["student_id"] if row else None
+
     def delete(self, conversation_id: str) -> None:
         with self.conn.cursor() as cur:
             cur.execute("DELETE FROM conversations WHERE id = %s::uuid", (conversation_id,))

@@ -10,6 +10,14 @@ DB_URL = os.environ.get(
 )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _apply_migrations():
+    """Ensure the schema exists before any test runs (migrations are idempotent)."""
+    from scripts.migrate import apply_migrations
+
+    apply_migrations(DB_URL)
+
+
 @pytest.fixture
 def db_conn():
     """Yields a psycopg connection. Each test runs in a transaction that is rolled back."""

@@ -41,6 +41,7 @@ uv sync
 uv run pytest
 uv run pytest tests/unit -v
 docker compose up -d db
+uv run python -m scripts.migrate        # apply all migrations/*.sql (idempotent)
 docker compose exec db psql -U lmos -d learning_memory_os -c "\\dt"
 ```
 

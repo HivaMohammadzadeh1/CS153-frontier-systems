@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Semantic tier: stable course/topic facts
-CREATE TABLE semantic_items (
+CREATE TABLE IF NOT EXISTS semantic_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     topic_id TEXT NOT NULL,
     artifact_type TEXT NOT NULL,        -- concept | example | misconception | exercise | code_pattern | paper_claim
@@ -12,25 +12,25 @@ CREATE TABLE semantic_items (
     embedding vector(1536),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX semantic_items_topic_idx ON semantic_items(topic_id);
-CREATE INDEX semantic_items_type_idx ON semantic_items(artifact_type);
-CREATE INDEX semantic_items_embedding_idx ON semantic_items USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS semantic_items_topic_idx ON semantic_items(topic_id);
+CREATE INDEX IF NOT EXISTS semantic_items_type_idx ON semantic_items(artifact_type);
+CREATE INDEX IF NOT EXISTS semantic_items_embedding_idx ON semantic_items USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Prerequisite graph (concept-level edges)
-CREATE TABLE prerequisites (
+CREATE TABLE IF NOT EXISTS prerequisites (
     src UUID REFERENCES semantic_items(id) ON DELETE CASCADE,
     dst UUID REFERENCES semantic_items(id) ON DELETE CASCADE,
     PRIMARY KEY (src, dst)
 );
 
 -- Student tier: per-student mastery + misconceptions
-CREATE TABLE students (
+CREATE TABLE IF NOT EXISTS students (
     id TEXT PRIMARY KEY,
     profile JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE mastery (
+CREATE TABLE IF NOT EXISTS mastery (
     student_id TEXT REFERENCES students(id) ON DELETE CASCADE,
     concept_id UUID REFERENCES semantic_items(id) ON DELETE CASCADE,
     score REAL NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE mastery (
     PRIMARY KEY (student_id, concept_id)
 );
 
-CREATE TABLE misconceptions (
+CREATE TABLE IF NOT EXISTS misconceptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id TEXT REFERENCES students(id) ON DELETE CASCADE,
     concept_id UUID REFERENCES semantic_items(id),
@@ -49,10 +49,10 @@ CREATE TABLE misconceptions (
     detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at TIMESTAMPTZ
 );
-CREATE INDEX misconceptions_student_idx ON misconceptions(student_id);
+CREATE INDEX IF NOT EXISTS misconceptions_student_idx ON misconceptions(student_id);
 
 -- Episodic tier: append-only event log
-CREATE TABLE episodic_events (
+CREATE TABLE IF NOT EXISTS episodic_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id TEXT REFERENCES students(id) ON DELETE CASCADE,
     event_type TEXT NOT NULL,           -- session_start | question | tutor_reply | quiz_attempt | exercise_attempt
@@ -60,11 +60,11 @@ CREATE TABLE episodic_events (
     embedding vector(1536),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX episodic_student_idx ON episodic_events(student_id, occurred_at DESC);
-CREATE INDEX episodic_embedding_idx ON episodic_events USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS episodic_student_idx ON episodic_events(student_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS episodic_embedding_idx ON episodic_events USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Intervention tier: which tutoring strategy was tried, did it work
-CREATE TABLE interventions (
+CREATE TABLE IF NOT EXISTS interventions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id TEXT REFERENCES students(id) ON DELETE CASCADE,
     misconception_id UUID REFERENCES misconceptions(id) ON DELETE SET NULL,
