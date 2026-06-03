@@ -48,6 +48,7 @@ class TutorAgent:
         strong_concepts: list[str] | None = None,
         active_misconception_texts: list[str] | None = None,
         due_concepts: list[str] | None = None,
+        learning_style: str | None = None,
     ) -> tuple[str, str]:
         """Build (system, user) prompts from selected context + the student profile.
 
@@ -68,6 +69,8 @@ class TutorAgent:
             profile_parts.append(
                 f"- Due for review (refresh gently if relevant): {', '.join(due_concepts)}"
             )
+        if learning_style:
+            profile_parts.append(f"- Learning style (adapt your teaching to this): {learning_style}")
         profile_block = ("STUDENT PROFILE:\n" + "\n".join(profile_parts) + "\n\n") if profile_parts else ""
         user_prompt = f"{profile_block}CONTEXT ITEMS:\n{context_block}\n\nSTUDENT QUESTION:\n{question}"
         return TUTOR_SYSTEM, user_prompt
@@ -89,6 +92,7 @@ class TutorAgent:
         strong_concepts: list[str] | None = None,
         active_misconception_texts: list[str] | None = None,
         due_concepts: list[str] | None = None,
+        learning_style: str | None = None,
         preselected_items: list[MemoryItem] | None = None,
     ) -> AgentResponse:
         # When a context selection is supplied (e.g. by a fine-tuned router),
@@ -140,6 +144,7 @@ class TutorAgent:
             question, selected,
             weak_concepts=weak_concepts, strong_concepts=strong_concepts,
             active_misconception_texts=active_misconception_texts, due_concepts=due_concepts,
+            learning_style=learning_style,
         )
         text = self.llm.complete(system=system, user=user_prompt, max_tokens=1024)
 

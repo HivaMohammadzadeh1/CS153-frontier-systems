@@ -817,6 +817,11 @@ async function renderYourAI() {
         <p class="view-subtitle">Memex adapts to you every turn — and remembers your context so it can be fine-tuned to teach <em>you</em> better over time.</p>
       </div>
 
+      ${p.learning_style ? `<div class="card" style="margin-bottom:16px;background:var(--grad-soft);border-color:transparent">
+        <div class="tile-kicker" style="margin-bottom:6px">🧭 Your learning style</div>
+        <div style="font-size:15px;line-height:1.55">${esc(p.learning_style)}</div>
+      </div>` : ""}
+
       <div class="grid-cards grid-2">
         <div class="card">
           <div class="ring-wrap">

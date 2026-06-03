@@ -23,6 +23,7 @@ class LearnerProfile:
     misconceptions: list[str] = field(default_factory=list)
     due_for_review: list[str] = field(default_factory=list)
     streak: int = 0
+    learning_style: str = ""        # one-line "how this student learns" summary
 
     def prompt_block(self) -> str:
         """Render the STUDENT PROFILE block injected into the tutor system prompt."""
@@ -35,6 +36,8 @@ class LearnerProfile:
             parts.append(f"- Active misconceptions to address: {'; '.join(self.misconceptions)}")
         if self.due_for_review:
             parts.append(f"- Due for review (refresh gently if relevant): {', '.join(self.due_for_review)}")
+        if self.learning_style:
+            parts.append(f"- Learning style: {self.learning_style}")
         if not parts:
             return ""
         pct = round(self.overall_mastery * 100)
@@ -49,6 +52,7 @@ class LearnerProfile:
             "misconceptions": self.misconceptions,
             "due_for_review": self.due_for_review,
             "streak": self.streak,
+            "learning_style": self.learning_style,
         }
 
 
@@ -66,6 +70,13 @@ def build_profile(conn: psycopg.Connection, student_id: str, *, streak: int = 0)
     strong_ids = [cid for cid, eff, conf in scored if eff > 0.7 and conf > 0.3]
     due_ids = student.due_for_review(student_id)
 
+    # Infer how this student learns (Loop 1). Best-effort: never break the profile.
+    try:
+        from .learning_style import compute_style
+        style_summary = compute_style(conn, student_id).summary
+    except Exception:
+        style_summary = ""
+
     title = _title_lookup(conn, set(weak_ids + strong_ids + due_ids))
     overall = 0.0
     total_conf = sum(c for _, _, c in scored)
@@ -80,6 +91,7 @@ def build_profile(conn: psycopg.Connection, student_id: str, *, streak: int = 0)
         misconceptions=[m["description"][:120] for m in student.active_misconceptions(student_id)][:3],
         due_for_review=[title[i] for i in due_ids if i in title][:5],
         streak=streak,
+        learning_style=style_summary,
     )
 
 

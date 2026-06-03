@@ -610,6 +610,7 @@ def _prepare_turn(conn, req: ChatRequest, llm, embedder, engine, logger) -> dict
         weak_concepts=profile.weaknesses or None, strong_concepts=profile.strengths or None,
         active_misconception_texts=profile.misconceptions or None,
         due_concepts=profile.due_for_review or None,
+        learning_style=profile.learning_style or None,
     )
     return {
         "conversation_id": conversation_id, "conv_was_created": conv_was_created,
