@@ -255,7 +255,7 @@ function substituteCitations(text, references) {
 }
 
 // ── Router / views ─────────────────────────────────────────────
-const VIEWS = ["home", "profile", "chat", "progress", "path", "yourai"];
+const VIEWS = ["home", "profile", "readiness", "chat", "progress", "path", "yourai"];
 
 function showView(name, pushHash = true) {
   if (!VIEWS.includes(name)) name = "home";
@@ -267,6 +267,7 @@ function showView(name, pushHash = true) {
   if (pushHash) location.hash = `#/${name}`;
   if (name === "home") renderHome();
   else if (name === "profile") renderProfile();
+  else if (name === "readiness") renderReadiness();
   else if (name === "progress") renderProgress();
   else if (name === "path") renderPath();
   else if (name === "yourai") renderYourAI();
@@ -1425,6 +1426,99 @@ async function bootApp() {
   }
   await maybeShowWelcomeBack();
   routeFromHash();   // default #/home
+}
+
+// ── Interview Readiness view (B2C wedge) ───────────────────────
+async function renderReadiness() {
+  const el = $("view-readiness");
+  let d;
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/readiness`);
+    if (!r.ok) throw new Error("http " + r.status);
+    d = await r.json();
+  } catch (_) {
+    el.innerHTML = '<div class="view-inner"><p class="view-subtitle">Could not load readiness.</p></div>';
+    return;
+  }
+  const stripCode = (x) => (x || "").replace(/\s*\(.*?\)\s*$/, "");
+  const pct = Math.round((d.overall_readiness || 0) * 100);
+  const readyLabel = pct >= 70 ? "Interview-ready" : pct >= 40 ? "Getting there" : "Early — lots to drill";
+  const areas = (d.areas || []).map((a) => {
+    const ap = Math.round(a.readiness * 100);
+    const cls = ap >= 70 ? "good" : ap >= 40 ? "warn" : "bad";
+    return `<div class="bar-row"><span class="lbl">${esc(stripCode(a.area_title) || ("Area " + a.area))} <span class="pct" style="color:var(--text-faint)">${a.covered}/${a.total}</span></span><span class="pct">${ap}%</span><div class="bar ${cls}"><i data-w="${ap}"></i></div></div>`;
+  }).join("");
+  const next = d.next_up;
+  const pro = !!d.pro;                       // server-enforced entitlement
+  const allGaps = d.gaps || [];
+  const total = d.gaps_total != null ? d.gaps_total : allGaps.length;
+  const gapRow = (g) =>
+    `<div class="tl-item"><div class="tl-ico quiz">${g.started ? "◐" : "○"}</div><div class="tl-body"><div class="tl-label">${esc(g.title)}</div><div class="tl-meta">${esc(stripCode(g.area_title))} · ${Math.round(g.mastery * 100)}%</div></div><button class="btn btn-ghost btn-sm" data-seed="${esc(g.topic_id)}">Drill</button></div>`;
+  const lockedRow = () =>
+    `<div class="tl-item" style="filter:blur(5px);pointer-events:none;user-select:none"><div class="tl-ico quiz">○</div><div class="tl-body"><div class="tl-label">████████ ███████</div><div class="tl-meta">██████ · ██%</div></div></div>`;
+  let gapsBlock;
+  if (total === 0) {
+    gapsBlock = `<div class="card"><p class="view-subtitle">No gaps — you're interview-ready. 🎯</p></div>`;
+  } else if (pro) {
+    gapsBlock = `<div class="card"><div class="timeline">${allGaps.slice(0, 8).map(gapRow).join("")}</div></div>`;
+  } else {
+    // Free: server returns ONE real gap; the rest are locked behind the paywall.
+    const teaser = allGaps.length ? gapRow(allGaps[0]) : "";
+    const more = Math.max(0, total - 1);
+    const blurred = Array.from({ length: Math.min(3, more) }, lockedRow).join("");
+    gapsBlock = `<div class="card">
+        <div class="timeline">${teaser}${blurred}</div>
+        <div style="margin-top:14px;padding:16px;border-radius:14px;background:var(--grad-soft);border:1px solid var(--border)">
+          <div style="font-family:var(--font-display);font-weight:600;font-size:16px">🔒 Unlock your full gap analysis + drill plan</div>
+          <div class="tile-sub" style="margin:4px 0 12px">See all <b>${more}</b> remaining gaps across the curriculum, a prioritized study plan, and your readiness trend over time.</div>
+          <button class="btn btn-primary upgrade-btn" data-src="readiness_gaps">Get Pro — see your full report →</button>
+        </div>
+      </div>`;
+  }
+  el.innerHTML = `
+    <div class="view-inner">
+      <div class="view-head">
+        <div class="view-eyebrow">Interview Readiness</div>
+        <h1 class="view-title">Are you ready to interview?</h1>
+        <p class="view-subtitle">Scored across the full ML-systems curriculum — untested topics count against you, just like a real interview.</p>
+      </div>
+      <div class="grid-cards grid-2">
+        <div class="card"><div class="ring-wrap">
+          <div class="ring" id="rdyRing"><span class="ring-val"><span id="rdyVal">0</span><small>%</small></span></div>
+          <div>
+            <div class="tile-kicker">Overall readiness</div>
+            <div style="font-family:var(--font-display);font-size:20px;font-weight:600;margin:2px 0 8px">${readyLabel}</div>
+            <div class="tile-sub">${d.topics_covered}/${d.topics_total} topics touched · ${d.concepts_mastered} mastered</div>
+            ${next ? `<button class="btn btn-primary btn-sm" style="margin-top:10px" data-seed="${esc(next.topic_id)}">Drill next: ${esc(next.title)} →</button>` : ""}
+          </div>
+        </div></div>
+        <div class="card"><div class="tile-kicker" style="margin-bottom:10px">Readiness by area</div>${areas}</div>
+      </div>
+      <div class="section-label">Top gaps to close</div>
+      ${gapsBlock}
+    </div>`;
+  requestAnimationFrame(() => {
+    const ring = $("rdyRing"); if (ring) ring.style.setProperty("--val", pct);
+    if ($("rdyVal")) countUp($("rdyVal"), pct);
+    el.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+  });
+  el.querySelectorAll("[data-seed]").forEach((b) => b.addEventListener("click", () => seedChat(b.dataset.seed)));
+  el.querySelectorAll(".upgrade-btn").forEach((b) => b.addEventListener("click", () => upgradeIntent(b.dataset.src)));
+}
+
+// Willingness-to-pay: record the "Get Pro" click; open checkout if configured.
+async function upgradeIntent(source) {
+  let url = null;
+  try {
+    const r = await fetch("/api/billing/checkout", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: source || "readiness" }),
+    });
+    if (r.ok) url = (await r.json()).checkout_url;
+  } catch (_) {}
+  if (url) window.open(url, "_blank");
+  else if (typeof toast === "function") toast(`✨ <span class="t-grad">You're on the Pro waitlist!</span>`);
+  else alert("You're on the Pro waitlist!");
 }
 
 // ── Init ───────────────────────────────────────────────────────

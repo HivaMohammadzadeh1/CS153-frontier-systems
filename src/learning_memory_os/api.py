@@ -88,7 +88,7 @@ def _settings():
 
 # ---- Auth gating ----
 # Public API paths that never require a session; everything else under /api/ does.
-_PUBLIC_API = ("/api/health", "/api/topics", "/api/info", "/api/routers", "/api/auth/")
+_PUBLIC_API = ("/api/health", "/api/topics", "/api/info", "/api/routers", "/api/auth/", "/api/billing/webhook")
 _STUDENT_PATH_RE = re.compile(r"^/api/student/([^/]+)")
 
 
@@ -202,7 +202,12 @@ def auth_me(request: Request):
     username = _username_from_request(request)
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"username": username}
+    conn = connect(_settings().database_url)
+    try:
+        pro = AuthStore(conn).is_pro(username)
+    finally:
+        conn.close()
+    return {"username": username, "is_pro": pro}
 
 
 # ---- Request/response models ----
@@ -326,6 +331,148 @@ def info():
         "tutor_model": "claude-opus-4-7",
         "embedding_model": "text-embedding-3-small",
     }
+
+
+class CheckoutRequest(BaseModel):
+    source: Optional[str] = None
+
+
+@app.post("/api/billing/checkout")
+def billing_checkout(req: CheckoutRequest, request: Request):
+    """Start a Pro upgrade. Logs the click-to-pay signal and returns a Stripe
+    checkout/payment URL if billing is configured (else null -> client shows a
+    waitlist, still capturing intent)."""
+    from learning_memory_os import billing
+    username = getattr(request.state, "username", None)
+    try:
+        InteractionLogger(path=_settings().log_dir / "interactions.jsonl").log(
+            {"event": "upgrade_intent", "student_id": username, "source": req.source}
+        )
+    except Exception:
+        pass
+    return {"checkout_url": billing.checkout_url(username) if username else None}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request):
+    """Stripe webhook — on successful checkout, grant Pro to the paying user
+    (matched by client_reference_id = username). Public route (no session)."""
+    from learning_memory_os import billing
+    payload = await request.body()
+    event = billing.parse_webhook(payload, request.headers.get("stripe-signature"))
+    if not event:
+        raise HTTPException(status_code=400, detail="invalid webhook")
+    username = billing.username_from_event(event)
+    if username:
+        conn = connect(_settings().database_url)
+        try:
+            AuthStore(conn).set_pro(username, True)
+            conn.commit()
+        finally:
+            conn.close()
+    return {"received": True}
+
+
+@app.get("/api/student/{student_id}/readiness")
+def student_readiness(student_id: str):
+    """Interview-readiness report: per-area readiness %, top gaps, and what to
+    drill next — computed against the FULL curriculum (untouched topics count as
+    0, because an interview covers the whole area). Plus an over-time trend if
+    mastery history exists. No LLM calls."""
+    from collections import defaultdict
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(student_id)
+        mastery = student.mastery_for(student_id)
+
+        # concept_id -> topic_id
+        ids = [m.concept_id for m in mastery]
+        concept_topic: dict[str, str] = {}
+        if ids:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text AS id, topic_id FROM semantic_items WHERE id::text = ANY(%s)",
+                    (ids,),
+                )
+                concept_topic = {r["id"]: r["topic_id"] for r in cur.fetchall()}
+
+        # confidence-weighted mastery per topic
+        by_topic: dict[str, list] = defaultdict(list)
+        for m in mastery:
+            t = concept_topic.get(m.concept_id)
+            if t:
+                by_topic[t].append((m.score, m.confidence))
+        topic_mastery: dict[str, float] = {}
+        for t, lst in by_topic.items():
+            tot = sum(c for _, c in lst) or 1e-6
+            topic_mastery[t] = sum(s * c for s, c in lst) / tot
+
+        # curriculum grouped by area (the full thing an interview covers)
+        areas_topics: dict[str, list] = defaultdict(list)
+        for tp in _TOPICS:
+            areas_topics[tp.area].append(tp.id)
+
+        area_readiness = []
+        for area in sorted(areas_topics):
+            tids = areas_topics[area]
+            r = sum(topic_mastery.get(t, 0.0) for t in tids) / max(1, len(tids))
+            area_readiness.append({
+                "area": area,
+                "area_title": _AREA_NAMES.get(area, ""),
+                "readiness": round(r, 3),
+                "covered": sum(1 for t in tids if t in topic_mastery),
+                "total": len(tids),
+            })
+        overall = round(sum(a["readiness"] for a in area_readiness) / max(1, len(area_readiness)), 3)
+
+        # gaps: every topic below interview bar (0.6), unstudied counts as 0
+        gaps = []
+        for tp in _TOPICS:
+            score = topic_mastery.get(tp.id, 0.0)
+            if score < 0.6:
+                gaps.append({
+                    "topic_id": tp.id, "title": tp.title, "area": tp.area,
+                    "area_title": _AREA_NAMES.get(tp.area, ""),
+                    "mastery": round(score, 3), "started": tp.id in topic_mastery,
+                })
+        gaps.sort(key=lambda g: (g["mastery"], 0 if g["started"] else 1))
+        # next-up: prefer an in-progress weak topic, else the weakest gap
+        in_progress = [g for g in gaps if g["started"]]
+        next_up = (in_progress[0] if in_progress else (gaps[0] if gaps else None))
+
+        # over-time trend (overall readiness), if history is being recorded
+        trend = []
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT to_char(occurred_at::date,'YYYY-MM-DD') AS d, "
+                    "       round(avg(score)::numeric,3) AS m "
+                    "FROM mastery_history WHERE student_id = %s "
+                    "GROUP BY occurred_at::date ORDER BY occurred_at::date",
+                    (student_id,),
+                )
+                trend = [{"date": r["d"], "avg_mastery": float(r["m"])} for r in cur.fetchall()]
+        except Exception:
+            trend = []  # mastery_history table not present yet
+
+        # Pro gating (server-enforced): free users get overall + areas + ONE gap
+        # teaser; the full gap analysis and over-time trend are the paid product.
+        pro = AuthStore(conn).is_pro(student_id)
+        return {
+            "overall_readiness": overall,
+            "areas": area_readiness,
+            "gaps": gaps[:8] if pro else gaps[:1],
+            "gaps_total": len(gaps),
+            "next_up": next_up,
+            "concepts_mastered": sum(1 for v in topic_mastery.values() if v >= 0.7),
+            "topics_covered": len(topic_mastery),
+            "topics_total": len(_TOPICS),
+            "trend": trend if pro else [],
+            "pro": pro,
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/api/student/{student_id}/state")

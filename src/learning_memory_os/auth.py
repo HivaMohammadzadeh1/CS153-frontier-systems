@@ -119,3 +119,18 @@ class AuthStore:
             return
         with self.conn.cursor() as cur:
             cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
+
+    # ---- Entitlement (Pro) ----
+    def is_pro(self, username: str) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT is_pro FROM users WHERE username = %s", (username,))
+            row = cur.fetchone()
+            return bool(row and row["is_pro"])
+
+    def set_pro(self, username: str, value: bool = True, *, stripe_customer_id: str | None = None) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET is_pro = %s, "
+                "stripe_customer_id = COALESCE(%s, stripe_customer_id) WHERE username = %s",
+                (value, stripe_customer_id, username),
+            )

@@ -57,6 +57,24 @@ class StudentStore:
                 """,
                 (student_id, concept_id, score, confidence),
             )
+            # Snapshot the resulting cumulative mastery for the over-time trend
+            # (the "we prove you improved" outcomes data). Best-effort: never
+            # block a mastery update if the history table isn't present yet.
+            try:
+                cur.execute(
+                    "SELECT score, confidence FROM mastery "
+                    "WHERE student_id = %s AND concept_id = %s",
+                    (student_id, concept_id),
+                )
+                row = cur.fetchone()
+                if row:
+                    cur.execute(
+                        "INSERT INTO mastery_history (student_id, concept_id, score, confidence) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (student_id, concept_id, row["score"], row["confidence"]),
+                    )
+            except Exception:
+                pass
 
     def due_for_review(self, student_id: str) -> list[str]:
         """Concept ids whose spaced-repetition review is due (next_review_at <= now)."""
