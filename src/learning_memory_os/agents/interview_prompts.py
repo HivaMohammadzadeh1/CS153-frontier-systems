@@ -24,6 +24,51 @@ EXERCISE_TYPES = [
     "calculation_drill", "production_tradeoff", "retry",
 ]
 
+# Hire/no-hire weights from a staff ML-infra interviewer (each sums to 1.0).
+# Communication is a multiplier, not a driver — deliberately small.
+CATEGORY_WEIGHTS = {
+    "ml_infra": {
+        "ml_systems_correctness": 0.15, "bottleneck_identification": 0.15,
+        "memory_compute_reasoning": 0.15, "latency_throughput_reasoning": 0.15,
+        "production_debugging": 0.12, "reliability": 0.10, "cost_awareness": 0.08,
+        "requirements": 0.05, "forward_deployed_judgment": 0.03, "communication": 0.02,
+    },
+    "forward_deployed": {
+        "ml_systems_correctness": 0.13, "bottleneck_identification": 0.13,
+        "memory_compute_reasoning": 0.12, "latency_throughput_reasoning": 0.12,
+        "production_debugging": 0.12, "reliability": 0.10, "cost_awareness": 0.08,
+        "requirements": 0.08, "forward_deployed_judgment": 0.08, "communication": 0.04,
+    },
+}
+# A weak score in any of these blocks "interview-ready" regardless of the average.
+CRITICAL_CATEGORIES = [
+    "bottleneck_identification", "memory_compute_reasoning",
+    "latency_throughput_reasoning", "production_debugging",
+]
+
+
+def weighted_overall(category_scores: dict, role: str = "ml_infra") -> int:
+    """Compute the overall score as the staff-interviewer weighted sum of category
+    scores (more defensible than trusting the LLM's holistic number)."""
+    w = CATEGORY_WEIGHTS.get(role, CATEGORY_WEIGHTS["ml_infra"])
+    total = sum(w.values()) or 1.0
+    return round(sum(float(category_scores.get(c, 0)) * wt for c, wt in w.items()) / total)
+
+
+# Canonical, high-consequence ML-systems misconceptions (staff-interviewer list).
+MISCONCEPTION_BANK = [
+    "Confusing throughput with latency.",
+    "Assuming batching always lowers latency (it raises per-request latency).",
+    "Ignoring KV-cache memory growth with sequence length and batch size.",
+    "Citing PagedAttention without understanding fragmentation / block-based KV memory.",
+    "Failing to distinguish prefill (compute-bound) from decode (memory-bandwidth-bound) bottlenecks.",
+    "Treating high GPU utilization as always good, without checking useful work, queueing, or memory stalls.",
+    "Optimizing only average latency and ignoring p95/p99 tail latency.",
+    "Assuming quantization only affects quality, not memory bandwidth, cost, and kernel behavior.",
+    "Choosing data/tensor/pipeline parallelism without accounting for communication overhead.",
+    "Proposing 'add more GPUs' before identifying the actual bottleneck.",
+]
+
 INTERVIEWER_SYSTEM = """You are a staff ML-systems engineer running an AI-infra / \
 ML-systems design interview (think the bar at a frontier lab or top inference startup).
 
@@ -48,10 +93,18 @@ bandwidth, KV-cache growth, arithmetic intensity) and penalize hand-waving.
 Grade each rubric category 0-100. A category the candidate did not address scores low — \
 silence is not credit. Explicitly name the tradeoffs and failure modes they MISSED.
 
-Detect concrete misconceptions, e.g.: confusing throughput with latency; ignoring KV-cache \
-memory growth with sequence length; assuming batching always reduces latency (it raises it); \
-invoking PagedAttention without understanding fragmentation; ignoring prefill-vs-decode \
-bottleneck differences; conflating data/tensor/pipeline parallelism; ignoring tail latency.
+Detect concrete misconceptions. Watch especially for these high-consequence ones: \
+(1) confusing throughput with latency; (2) assuming batching always lowers latency; \
+(3) ignoring KV-cache memory growth with sequence length and batch size; (4) citing \
+PagedAttention without understanding fragmentation / block-based KV memory; (5) not \
+distinguishing prefill (compute-bound) from decode (memory-bandwidth-bound) bottlenecks; \
+(6) treating high GPU utilization as always good; (7) optimizing only average latency, \
+ignoring p95/p99; (8) assuming quantization only affects quality, not bandwidth/cost/kernels; \
+(9) picking parallelism without accounting for communication overhead; (10) saying "add more \
+GPUs" before identifying the bottleneck.
+
+Communication is a MULTIPLIER, not a driver: a great answer must be explainable, but polished \
+prose cannot rescue weak technical reasoning. Score communication accordingly.
 
 Then write an `improved_answer`: a crisp, senior-level model answer (what a strong candidate \
 would have said), so the student can see the gap.
@@ -111,6 +164,13 @@ memory), and relevant config/deploy details — plus constraints (SLA, budget). 
 must contain enough signal to reach ONE specific root cause, with a couple of plausible red \
 herrings. Make it solvable by reasoning, not guessing.
 
+Prefer the canonical real-world incident patterns: (1) long-context p99 latency regression as \
+conversations grow (prefill/decode + KV-cache); (2) high GPU utilization but low useful \
+throughput (batching/memory stalls/queueing/stragglers); (3) OOM / capacity collapse during a \
+traffic burst (KV-cache sizing, admission control, autoscaling, fallback); (4) quality \
+regression after a model/quantization change (eval harness, rollback, A/B); (5) p99 regression \
+after a kernel/driver/serving-engine upgrade (observability, canary, rollback).
+
 Difficulty by level: beginner = clear symptom + obvious metric; intermediate = realistic \
 noise + a red herring; advanced = subtle, interacting causes, misleading first metric.
 
@@ -125,6 +185,10 @@ herrings, fixes that don't address the root cause, ignoring the SLA/cost constra
 Be strict and specific. Name the evidence they ignored and the steps they skipped. Detect \
 debugging misconceptions (e.g. high GPU util means compute-bound; adding GPUs fixes a \
 memory-fragmentation stall; treating throughput drop as a latency problem).
+
+Strong on-call engineers: form hypotheses before guessing; inspect the RIGHT metrics first; \
+separate immediate mitigation from root-cause analysis; protect the customer experience first; \
+and know when to roll back. Reward that discipline; penalize random fixes and metric tunnel-vision.
 
 `improved_answer` = the correct diagnosis: the root cause, the evidence that proves it, and \
 the right fix. Return ONLY the structured evaluation via the tool; scores must discriminate."""

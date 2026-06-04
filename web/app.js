@@ -1459,6 +1459,36 @@ async function renderReadiness() {
   }).join("");
   const next = d.next_up;
   const pro = !!d.pro;                       // server-enforced entitlement
+  // Hire-bar verdict (from interview history) — the core hook.
+  const v = d.verdict || {};
+  const tierClass = { frontier: "good", ready: "good", borderline: "warn", not_ready: "bad", remediation: "bad" }[v.tier] || "warn";
+  const tierEmoji = { frontier: "🏆", ready: "✅", borderline: "🟡", not_ready: "🔴", remediation: "🧱", no_data: "🎤" }[v.tier] || "🎤";
+  let verdictBlock = "";
+  if (v.tier === "no_data") {
+    verdictBlock = `<div class="card" style="background:var(--grad-soft);border:1px solid var(--border)">
+        <div style="display:flex;gap:14px;align-items:center">
+          <div style="font-size:34px">🎤</div>
+          <div><div style="font-family:var(--font-display);font-weight:600;font-size:18px">No verdict yet</div>
+          <div class="tile-sub">${esc(v.label || "Take a mock interview to get your readiness verdict.")}</div></div>
+          <button class="btn btn-primary" style="margin-left:auto" data-go="interview">Start a mock interview →</button>
+        </div></div>`;
+  } else if (v.tier) {
+    const crit = (v.critical_failures || []).map((c) =>
+      `<span class="pill bad">${esc(stripCode(c.category.replace(/_/g, " ")))} ${c.score}</span>`).join(" ");
+    verdictBlock = `<div class="card verdict-card">
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+          <div style="font-size:40px;line-height:1">${tierEmoji}</div>
+          <div style="flex:1;min-width:220px">
+            <div class="tile-kicker">Hire-bar verdict</div>
+            <div style="font-family:var(--font-display);font-weight:700;font-size:22px;margin:2px 0">${esc(v.label || "")}</div>
+            <div class="tile-sub">Blended score <b>${v.score != null ? v.score : "—"}</b> · ${v.interview_count} interview${v.interview_count === 1 ? "" : "s"} · avg ${v.interview_avg != null ? v.interview_avg : "—"} · consistency ${v.consistency != null ? v.consistency : "—"}</div>
+            ${crit ? `<div style="margin-top:10px"><span class="tile-sub">Critical gaps blocking a pass:</span><br>${crit}</div>` : ""}
+          </div>
+          <div class="verdict-score ${tierClass}">${v.score != null ? Math.round(v.score) : "—"}</div>
+        </div>
+        <div class="tile-sub" style="margin-top:10px;opacity:.8">Verdict uses a real hire bar: 60% interview average + 20% trajectory + 20% consistency, gated by your four load-bearing skills. Ready = avg ≥ 80 over ≥ 3 interviews with no critical gap.</div>
+      </div>`;
+  }
   const allGaps = d.gaps || [];
   const total = d.gaps_total != null ? d.gaps_total : allGaps.length;
   const gapRow = (g) =>
@@ -1492,6 +1522,7 @@ async function renderReadiness() {
         <h1 class="view-title">Are you ready to interview?</h1>
         <p class="view-subtitle">Scored across the full ML-systems curriculum — untested topics count against you, just like a real interview.</p>
       </div>
+      ${verdictBlock}
       <div class="grid-cards grid-2">
         <div class="card"><div class="ring-wrap">
           <div class="ring" id="rdyRing"><span class="ring-val"><span id="rdyVal">0</span><small>%</small></span></div>
@@ -1514,6 +1545,7 @@ async function renderReadiness() {
   });
   el.querySelectorAll("[data-seed]").forEach((b) => b.addEventListener("click", () => seedChat(b.dataset.seed)));
   el.querySelectorAll(".upgrade-btn").forEach((b) => b.addEventListener("click", () => upgradeIntent(b.dataset.src)));
+  el.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.go)));
 }
 
 // Willingness-to-pay: record the "Get Pro" click; open checkout if configured.

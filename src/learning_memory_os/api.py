@@ -373,6 +373,95 @@ async def billing_webhook(request: Request):
     return {"received": True}
 
 
+# Calibrated readiness tiers (expert hire-bar mapping).
+_READINESS_TIERS = [
+    (90, "frontier", "Frontier-ready — would clear the bar at a top inference team"),
+    (80, "ready", "Interview-ready — hireable on this evidence"),
+    (70, "borderline", "Borderline — close, but tighten the weak areas"),
+    (60, "not_ready", "Not ready yet — real gaps to close"),
+    (0, "remediation", "Remediation — build the fundamentals first"),
+]
+_CRITICAL_FAIL_THRESHOLD = 60  # a critical category below this blocks "ready"
+
+
+def _tier_for(score: float) -> tuple[str, str]:
+    for floor, key, label in _READINESS_TIERS:
+        if score >= floor:
+            return key, label
+    return "remediation", _READINESS_TIERS[-1][2]
+
+
+def _readiness_verdict(conn, student_id: str) -> dict:
+    """Hire-bar verdict from the student's interview history. Returns a tier, a
+    blended 0-100 score, and the critical-failure gate. Empty/!ready when there
+    isn't enough interview signal yet (expert: ready = avg>=80 over >=3 interviews
+    AND no critical failure)."""
+    import statistics
+    from learning_memory_os.agents.interview_prompts import CRITICAL_CATEGORIES
+
+    rows = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT overall_score, evaluation FROM interview_evaluations "
+                "WHERE student_id = %s ORDER BY occurred_at DESC LIMIT 5",
+                (student_id,),
+            )
+            rows = cur.fetchall()
+    except Exception:
+        rows = []  # table not present yet
+
+    n = len(rows)
+    if n == 0:
+        return {
+            "tier": "no_data", "label": "Take a mock interview to get your readiness verdict",
+            "score": None, "interview_count": 0, "interview_avg": None,
+            "critical_failures": [], "interview_ready": False, "consistency": None,
+            "trajectory": None,
+        }
+
+    scores = [float(r["overall_score"] or 0) for r in rows]  # most-recent first
+    avg = sum(scores) / n
+
+    # trajectory: recent vs older half (chronological); reward improvement
+    chrono = list(reversed(scores))
+    if n >= 2:
+        half = max(1, n // 2)
+        older = sum(chrono[:half]) / half
+        recent = sum(chrono[-half:]) / half
+        trajectory = max(0.0, min(100.0, 70.0 + (recent - older)))
+    else:
+        trajectory = avg
+
+    # consistency: tight clustering = trustworthy; high variance = risky
+    consistency = max(0.0, 100.0 - statistics.pstdev(scores)) if n >= 2 else avg
+
+    blended = 0.6 * avg + 0.2 * trajectory + 0.2 * consistency
+
+    # critical-failure gate from the MOST RECENT interview's category scores
+    crit_fail = []
+    latest = rows[0]["evaluation"] or {}
+    cats = latest.get("category_scores", {}) if isinstance(latest, dict) else {}
+    for c in CRITICAL_CATEGORIES:
+        if c in cats and float(cats[c] or 0) < _CRITICAL_FAIL_THRESHOLD:
+            crit_fail.append({"category": c, "score": int(cats[c] or 0)})
+
+    interview_ready = (n >= 3) and (avg >= 80) and not crit_fail
+
+    tier, label = _tier_for(blended)
+    if crit_fail and tier in ("frontier", "ready"):
+        tier, label = "not_ready", "Not ready — a load-bearing skill is failing"
+    if n < 3 and tier in ("frontier", "ready"):
+        label = f"{label} (need {3 - n} more interview{'s' if 3 - n != 1 else ''} to confirm)"
+
+    return {
+        "tier": tier, "label": label, "score": round(blended, 1),
+        "interview_count": n, "interview_avg": round(avg, 1),
+        "consistency": round(consistency, 1), "trajectory": round(trajectory, 1),
+        "critical_failures": crit_fail, "interview_ready": interview_ready,
+    }
+
+
 @app.get("/api/student/{student_id}/readiness")
 def student_readiness(student_id: str):
     """Interview-readiness report: per-area readiness %, top gaps, and what to
@@ -456,12 +545,19 @@ def student_readiness(student_id: str):
         except Exception:
             trend = []  # mastery_history table not present yet
 
+        # Interview-readiness VERDICT — calibrated to a real hire bar, not raw mastery.
+        # Blend = 60% interview avg + 20% trajectory + 20% consistency, with a hard
+        # critical-failure gate: a weak score in any of the 4 load-bearing categories
+        # blocks "ready" no matter how high the average (expert calibration).
+        verdict = _readiness_verdict(conn, student_id)
+
         # Pro gating (server-enforced): free users get overall + areas + ONE gap
         # teaser; the full gap analysis and over-time trend are the paid product.
         pro = AuthStore(conn).is_pro(student_id)
         return {
             "overall_readiness": overall,
             "areas": area_readiness,
+            "verdict": verdict,
             "gaps": gaps[:8] if pro else gaps[:1],
             "gaps_total": len(gaps),
             "next_up": next_up,

@@ -1,12 +1,14 @@
-# Memex — a context-routed mastery tutor for ML systems engineering
+# Memex — LeetCode for ML-systems design
 
-> *Not a chatbot that remembers you — a learning OS that **models what you know**, **routes only the context you need** (with a model we fine-tuned ourselves), and **proves your interview-readiness improving over time**.*
+> *An ML-infra **interview simulator** that teaches you to think like the engineer on call for a frontier-model serving system — with a self-improving AI staff engineer that **models what you know**, **routes only the context you need** (with a router we fine-tuned ourselves), and gives you a **calibrated hire-bar verdict** that improves over time.*
 
 CS 153 (Building Frontier-Model Applications) final project. Memex is an adaptive
-tutor for ML-systems engineering (the CS336 / CS349D body of knowledge). It pairs a
-frontier LLM for explanations with a **persistent, structured learner model** and a
-**learned context-selection router**, then packages the result as a monetizable
-interview-readiness product.
+interview-prep simulator for ML-systems engineering (the CS336 / CS349D body of
+knowledge). A staff-engineer AI judge runs mock design interviews and production
+debugging incidents, scoring you against a real hire bar; a **persistent, structured
+learner model** tracks every concept; and a **learned context-selection router** keeps
+the tutor's context tight. The product it sells is the **calibrated readiness verdict** —
+proof you'd clear the bar, not just answer text.
 
 ---
 
@@ -19,7 +21,7 @@ keeps loose notes. Memex differs structurally:
 |---|---|---|
 | Learner model | opaque, uncontrollable notes | **explicit per-concept mastery + confidence, misconceptions, prerequisites, spaced-repetition schedule** |
 | Context selection | stuff the window (opaque, costly) | **a fine-tuned router** selects the optimal subset under a token budget — *observable, scored, cheap* |
-| Outcomes | none | **interview-readiness % over time** — proof you improved (a stateless tutor can't produce this) |
+| Outcomes | none | **calibrated hire-bar verdict** (60% interview avg + 20% trajectory + 20% consistency, gated by 4 load-bearing skills) that improves over time — proof you'd clear the bar (a stateless tutor can't produce this) |
 | Pedagogy | reactive Q&A | misconception **diagnostics**, **adaptive-difficulty** quizzes, spaced-repetition resurfacing |
 | Ownership | vendor silo | **self-hostable**; your data; per-user trajectory capture for further fine-tuning |
 
@@ -100,6 +102,13 @@ Selection accuracy scales cleanly with size; the **7B reaches 0.81 Jaccard and P
 dominates the 3B** (higher accuracy *and* lower latency — it emits tighter, correct
 selections). The accuracy-vs-cost frontier is exactly the artifact that says which size
 is worth its compute.
+
+> **How we keep the claims honest** — the router is measured on *two* axes (selection
+> Jaccard vs. the oracle **and** downstream learning-outcome quality), the readiness verdict
+> is a calibrated hire-bar mapping (not a raw average), and the learning result is reported
+> as a within-subject n=1 design with named threats. Full methodology, including the
+> three-phase router objective and the claim boundary for each number:
+> [`docs/EVAL_METHODOLOGY.md`](docs/EVAL_METHODOLOGY.md).
 
 ### Serving the learned router
 - **In-process** for small sizes during local/dev use: `router/infer.py` loads

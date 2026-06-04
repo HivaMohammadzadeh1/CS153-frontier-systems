@@ -7,6 +7,7 @@ API persists and uses to update the student skill model.
 from .interview_prompts import (
     INTERVIEWER_SYSTEM, JUDGE_SYSTEM, EVALUATION_SCHEMA, CATEGORIES,
     DEBUG_INCIDENT_SYSTEM, DEBUG_JUDGE_SYSTEM, DEBUG_EVAL_SCHEMA, DEBUG_CATEGORIES,
+    weighted_overall,
 )
 
 
@@ -38,7 +39,8 @@ class InterviewAgent:
         return self.llm.complete(system=INTERVIEWER_SYSTEM, user=user, max_tokens=400).strip()
 
     def evaluate(self, *, question: str, answer: str, topic_title: str,
-                 level: str = "intermediate", profile_summary: str | None = None) -> dict:
+                 level: str = "intermediate", profile_summary: str | None = None,
+                 role: str = "ml_infra") -> dict:
         ctx = f"\nWhat we know about this student: {profile_summary}" if profile_summary else ""
         user = (
             f"TOPIC: {topic_title}\nLEVEL: {level}{ctx}\n\n"
@@ -52,7 +54,11 @@ class InterviewAgent:
             tool_description="Submit the structured ML-systems interview evaluation.",
             max_tokens=2048,
         )
-        return _normalize(ev, CATEGORIES)
+        ev = _normalize(ev, CATEGORIES)
+        # Override the LLM's holistic number with the staff-interviewer weighted sum
+        # (fixes over-weighting communication).
+        ev["overall_score"] = weighted_overall(ev["category_scores"], role)
+        return ev
 
 
 class DebuggingAgent:
