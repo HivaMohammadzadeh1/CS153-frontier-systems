@@ -537,6 +537,7 @@ function seedChat(topicId) {
   if (topicId && TOPIC_MAP[topicId]) {
     $("topicSelect").value = topicId;
     state.topicId = topicId;
+    renderStarters(topicId);
   }
   startNewChatLocal();
   showView("chat");
@@ -961,9 +962,24 @@ const STARTERS = [
   { icon: "🎯", title: "Compare DDP, FSDP, and tensor parallelism", sub: "Distributed training" },
   { icon: "🚀", title: "Design an ad ranking system", sub: "ML system design" },
 ];
-function buildStarterGrid() {
+// Topic-tailored starter prompts (instant, no LLM) — shown when a topic is picked.
+const STARTER_TEMPLATES = [
+  { icon: "🧠", q: (t) => `Explain ${t} from first principles`, sub: "Core idea" },
+  { icon: "⚖️", q: (t) => `What are the key tradeoffs in ${t}?`, sub: "Design tradeoffs" },
+  { icon: "🔧", q: (t) => `How does ${t} work in production?`, sub: "In practice" },
+  { icon: "⚠️", q: (t) => `What's the most common misconception about ${t}?`, sub: "Avoid pitfalls" },
+  { icon: "🎤", q: (t) => `How would ${t} come up in an ML-systems interview?`, sub: "Interview angle" },
+  { icon: "🔢", q: (t) => `Do the back-of-the-envelope math for ${t}`, sub: "Quantitative" },
+];
+
+function renderStarters(topicId) {
   const grid = $("starterGrid");
-  STARTERS.forEach(({ icon, title, sub }) => {
+  if (!grid) return;
+  grid.innerHTML = "";
+  const cards = (topicId && TOPIC_MAP[topicId])
+    ? STARTER_TEMPLATES.map((s) => ({ icon: s.icon, title: s.q(TOPIC_MAP[topicId].title), sub: s.sub }))
+    : STARTERS;
+  cards.forEach(({ icon, title, sub }) => {
     const btn = document.createElement("button");
     btn.className = "starter-card";
     btn.innerHTML = `<div class="starter-ico">${icon}</div>
@@ -973,6 +989,7 @@ function buildStarterGrid() {
     grid.appendChild(btn);
   });
 }
+function buildStarterGrid() { renderStarters(state.topicId || null); }
 
 // ── Message rendering ──────────────────────────────────────────
 function thinkingEl() {
@@ -1369,7 +1386,7 @@ $("sendBtn").addEventListener("click", () => sendMessage());
 $("newChatBtn").addEventListener("click", () => { startNewChatLocal(); $("historyMenu").removeAttribute("open"); showView("chat"); });
 $("newChatTopBtn").addEventListener("click", () => { startNewChatLocal(); showView("chat"); });
 
-$("topicSelect").addEventListener("change", (e) => { state.topicId = e.target.value || null; });
+$("topicSelect").addEventListener("change", (e) => { state.topicId = e.target.value || null; renderStarters(state.topicId); });
 $("routerSelect").addEventListener("change", (e) => { state.router = e.target.value || ""; });
 
 $("routingClose").addEventListener("click", closeRoutingModal);
