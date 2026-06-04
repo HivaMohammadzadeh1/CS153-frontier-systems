@@ -85,6 +85,13 @@ Difficulty by level:
 
 Output ONLY the question text. No preamble, no rubric, no answer."""
 
+INTERVIEW_FOLLOWUP_SYSTEM = """You are the same staff ML-systems interviewer, now mid-interview. \
+You have the original question and the candidate's answer(s) so far. Ask ONE sharp follow-up \
+that a real interviewer would ask next — drilling into the WEAKEST or vaguest part of their \
+latest answer, forcing a number, exposing a missed tradeoff, or pushing on an unstated \
+assumption. Do not re-ask what they already covered. Do not coach or reveal the answer. \
+Keep it to 1-3 sentences. Output ONLY the follow-up question."""
+
 JUDGE_SYSTEM = """You are a rigorous AI-infra / ML-systems interviewer and Stanford-caliber \
 ML-systems professor grading a candidate's design answer. Be strict, specific, and \
 technical. NEVER give vague praise. Reward correct quantitative reasoning (FLOPs, memory \
@@ -137,6 +144,89 @@ EVALUATION_SCHEMA = {
         "next_topic": {"type": "string", "description": "the single most valuable topic to study next"},
         "recommended_exercise_type": {"type": "string", "enum": EXERCISE_TYPES},
         "improved_answer": {"type": "string", "description": "a senior-level model answer"},
+    },
+    "required": [
+        "overall_score", "category_scores", "strengths", "weaknesses",
+        "misconceptions", "next_topic", "recommended_exercise_type", "improved_answer",
+    ],
+}
+
+
+# ── Forward-deployed engineer mode ─────────────────────────────────────────────
+# A customer-facing scenario ("our AI agent feels slow") graded on the 7 sub-skills
+# that separate a forward-deployed engineer from a pure backend engineer.
+FORWARD_CATEGORIES = [
+    "problem_framing",          # turn a vague customer complaint into a measurable problem
+    "metric_selection",         # ask for / choose the RIGHT signals (p99, tokens/s, util, queue)
+    "bottleneck_localization",  # localize to prefill/decode/KV/batching/network/client
+    "hypothesis_iteration",     # propose, test, and discard hypotheses with the evidence
+    "solution_tradeoffs",       # fix that respects latency/quality/cost constraints
+    "cost_business_awareness",  # tie the fix to $ / SLA / customer impact
+    "customer_communication",   # explain it to a non-expert stakeholder without hand-waving
+]
+
+FORWARD_SCENARIO_SYSTEM = """You are a staff forward-deployed engineer at a frontier-model \
+company, writing a realistic CUSTOMER SCENARIO for a training exercise on the given topic.
+
+A customer (a non-expert, e.g. a PM or founder at the customer company) reports a vague, \
+business-flavored problem about an AI product they built on your serving stack — e.g. "our \
+support agent feels slow," "costs are exploding," "answers got worse last week," "it falls \
+over at peak." Write the scenario as the customer would actually say it: a real complaint, \
+some business context (scale, SLA, budget, what they tried), and a FEW concrete-but-incomplete \
+facts. CRUCIALLY, withhold the precise metrics — a strong engineer must ask for the right ones. \
+Embed a single coherent underlying root cause an ML-systems engineer could reach by asking the \
+right questions, plus a plausible distractor the customer is fixated on.
+
+Difficulty by level: beginner = one clear lever; intermediate = a red herring the customer \
+believes; advanced = interacting causes + a business constraint that rules out the obvious fix.
+
+Output ONLY the customer's message + business context. Do NOT reveal the root cause, the \
+metrics to request, or the fix."""
+
+FORWARD_JUDGE_SYSTEM = """You are a rigorous staff forward-deployed engineer grading how a \
+candidate handled a customer's vague problem. Forward-deployed work is NOT just backend skill \
+— it is turning ambiguity into a measured problem, asking for the RIGHT signals, localizing \
+the bottleneck, iterating on hypotheses with evidence, proposing a fix that respects the \
+customer's latency/quality/COST/SLA constraints, and explaining it to a non-expert without \
+hand-waving or jargon-dumping.
+
+Grade each of the 7 sub-skills 0-100. Reward: reframing the vague complaint into something \
+measurable; asking for the specific metrics that would discriminate causes (p50/p99, tokens/s, \
+GPU util vs useful work, queue depth, KV/memory, request mix, context lengths) BEFORE guessing; \
+naming the real bottleneck and the customer's distractor; tying the fix to dollars and SLA; and \
+clear stakeholder communication. Penalize: jumping to a fix before measuring, chasing the \
+customer's pet theory, ignoring cost/SLA, and either talking down to or over the customer.
+
+`improved_answer` = how a strong forward-deployed engineer would have handled it: the questions \
+they'd ask, the metric that localizes the cause, the fix, its cost/SLA tradeoff, and the \
+one-paragraph explanation they'd give the customer. Return ONLY the structured evaluation; \
+scores must discriminate — do not cluster at 70."""
+
+FORWARD_EVAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_score": {"type": "integer", "description": "0-100"},
+        "category_scores": {
+            "type": "object",
+            "properties": {c: {"type": "integer", "description": "0-100"} for c in FORWARD_CATEGORIES},
+            "required": FORWARD_CATEGORIES,
+        },
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "weaknesses": {"type": "array", "items": {"type": "string"}},
+        "misconceptions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "concept": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["description"],
+            },
+        },
+        "next_topic": {"type": "string"},
+        "recommended_exercise_type": {"type": "string", "enum": EXERCISE_TYPES},
+        "improved_answer": {"type": "string", "description": "how a strong forward-deployed engineer handles it"},
     },
     "required": [
         "overall_score", "category_scores", "strengths", "weaknesses",

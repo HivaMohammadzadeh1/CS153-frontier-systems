@@ -43,6 +43,11 @@ The core research question: *can a small model match a frontier oracle at **cont
 - **Deployment:** self-host the trained router via **DigitalOcean GPU Droplet + vLLM** (`deploy/digitalocean/`) or Modal; the product can call it as a remote OpenAI-compatible endpoint.
 
 ### [3] Agent / automation
+- **InterviewAgent** (`src/learning_memory_os/agents/interview.py`): three staff-engineer exercise modes graded against a real hire bar —
+  - **Multi-turn design interview** — a back-and-forth: the interviewer asks follow-up probes that drill into the weakest part of your last answer, then grades the *whole conversation* across 10 rubric categories.
+  - **Production debugging** — a realistic incident (simulated logs/metrics) graded on your debugging *process*.
+  - **Forward-deployed engineer** — a vague customer complaint ("our agent feels slow") graded on the 7 sub-skills that separate forward-deployed work from pure backend: framing, metric selection, localization, hypothesis iteration, the fix, its cost/SLA tradeoff, and explaining it to a non-expert.
+  The overall score is the **staff-interviewer weighted sum** of categories (communication is a 0.02 multiplier, not a driver), feeding the calibrated readiness verdict.
 - **TutorAgent** (`src/learning_memory_os/agents/tutor.py`): mastery-aware prompting (skips mastered topics, targets weak ones, confronts active misconceptions), with a **diagnostic remediation** loop and **adaptive-difficulty** quizzes (difficulty scales with mastery + recent scores).
 - **RoutingEngine** (heuristic, scored on relevance/recency/misconception/prerequisite/reuse) **or** the fine-tuned router, selectable per request.
 - **Trace capture** (`src/learning_memory_os/memory/trace.py`): every turn is logged as a training trajectory for future per-user fine-tuning.

@@ -27,11 +27,17 @@ function areaName(letter) {
   return letter && letter !== "?" ? `Area ${letter}` : "Other topics";
 }
 
-// Sort area keys alphabetically, but always push the catch-all "?" ("Other
-// topics") to the bottom of any list.
+// Curriculum TEACHING order (not alphabetical): fundamentals → inference serving →
+// training systems → production ops → data/alignment → agents → system design.
+// Inference-first on purpose — the ML-infra interview bar lives in serving.
+const AREA_ORDER = ["A", "C", "B", "F", "D", "E", "G"];
 function sortAreaKey(a, b) {
   if (a === "?") return 1;
   if (b === "?") return -1;
+  const ia = AREA_ORDER.indexOf(a), ib = AREA_ORDER.indexOf(b);
+  if (ia !== -1 && ib !== -1) return ia - ib;
+  if (ia !== -1) return -1;
+  if (ib !== -1) return 1;
   return String(a).localeCompare(String(b));
 }
 
@@ -1564,22 +1570,50 @@ async function upgradeIntent(source) {
 }
 
 // ── Mock Interview (AI Judge) ──────────────────────────────────
-let _ivQuestion = null, _ivTopic = null, _ivLevel = "intermediate", _ivMode = "interview";
+let _ivQuestion = null, _ivTopic = null, _ivTopicTitle = "", _ivLevel = "intermediate", _ivMode = "interview";
+let _ivTranscript = [];   // multi-turn design interview: [{q,a}, ...]
+const IV_MAX_TURNS = 3;   // Q1 + up to 2 follow-up probes
+
+const IV_MODES = {
+  interview: {
+    title: "ML-systems design interview", eyebrow: "Mock Interview",
+    sub: "A staff-engineer AI judge runs a real back-and-forth — it asks follow-up probes on your weak spots, then scores the whole conversation across 10 rubric categories.",
+    gen: "/api/interview/question", qkey: "question", evalUrl: "/api/interview/evaluate",
+    qlabel: "Design question", spinning: "Generating a design question…",
+    placeholder: "Reason out loud: clarify requirements, identify bottlenecks, do the latency/throughput/memory math, name the tradeoffs…",
+  },
+  debug: {
+    title: "Production debugging", eyebrow: "Incident response",
+    sub: "A realistic production incident with simulated logs & metrics. You're graded on your debugging process — hypotheses, evidence, root cause, fix.",
+    gen: "/api/debug/incident", qkey: "incident", evalUrl: "/api/debug/evaluate",
+    qlabel: "Incident", spinning: "Spinning up a production incident…",
+    placeholder: "Diagnose it: hypotheses, what the logs/metrics tell you, the root cause, and the fix…",
+  },
+  forward: {
+    title: "Forward-deployed engineer", eyebrow: "Customer scenario",
+    sub: "A customer reports a vague problem (\"our agent feels slow\"). You're graded on the 7 forward-deployed sub-skills: framing, asking for the right metrics, localizing, iterating, the fix, its cost/SLA tradeoff, and explaining it to a non-expert.",
+    gen: "/api/forward/scenario", qkey: "scenario", evalUrl: "/api/forward/evaluate",
+    qlabel: "Customer says", spinning: "Drafting a customer scenario…",
+    placeholder: "Handle the customer: what metrics do you ask for, how do you localize the bottleneck, what's the fix + its cost/SLA tradeoff, and how do you explain it to them in plain language?",
+  },
+};
+
 async function renderInterview() {
   const el = $("view-interview");
   el.innerHTML = `
     <div class="view-inner">
       <div class="view-head">
-        <div class="view-eyebrow">Mock Interview</div>
-        <h1 class="view-title">ML-systems design interview</h1>
-        <p class="view-subtitle">Answer like a real interview. A staff-engineer AI judge scores you across 10 rubric categories, finds your misconceptions, and updates your skill model.</p>
+        <div class="view-eyebrow" id="ivEyebrow">Mock Interview</div>
+        <h1 class="view-title" id="ivTitle">ML-systems design interview</h1>
+        <p class="view-subtitle" id="ivSub">${IV_MODES.interview.sub}</p>
       </div>
       <div class="card">
         <div class="tile-kicker" style="margin-bottom:8px">Set up</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <select id="ivMode" class="topic-select">
-            <option value="interview">Design interview</option>
+            <option value="interview">Design interview (multi-turn)</option>
             <option value="debug">Production debugging</option>
+            <option value="forward">Forward-deployed (customer)</option>
           </select>
           <select id="ivLevel" class="topic-select">
             <option value="beginner">Beginner</option>
@@ -1587,56 +1621,113 @@ async function renderInterview() {
             <option value="advanced">Advanced</option>
           </select>
           <select id="ivTopic" class="topic-select"><option value="">Weakest topic (auto)</option></select>
-          <button class="btn btn-primary" id="ivGen">Generate question →</button>
+          <button class="btn btn-primary" id="ivGen">Start →</button>
         </div>
       </div>
       <div id="ivBody"></div>
     </div>`;
   const ts = $("ivTopic");
   Object.entries(TOPIC_MAP).forEach(([id, m]) => { const o = document.createElement("option"); o.value = id; o.textContent = m.title; ts.appendChild(o); });
+  $("ivMode").addEventListener("change", () => {
+    const m = IV_MODES[$("ivMode").value] || IV_MODES.interview;
+    $("ivEyebrow").textContent = m.eyebrow; $("ivTitle").textContent = m.title; $("ivSub").textContent = m.sub;
+    $("ivGen").textContent = $("ivMode").value === "interview" ? "Start →" : "Generate →";
+  });
   $("ivGen").addEventListener("click", ivGenerate);
 }
+
 async function ivGenerate() {
   const body = $("ivBody"), btn = $("ivGen");
   _ivLevel = $("ivLevel").value;
   const topic = $("ivTopic").value || null;
   _ivMode = $("ivMode") ? $("ivMode").value : "interview";
-  const isDebug = _ivMode === "debug";
+  _ivTranscript = [];
+  const m = IV_MODES[_ivMode];
   btn.disabled = true;
-  body.innerHTML = `<div class="card"><span class="thinking-dots"><span></span><span></span><span></span></span> ${isDebug ? "Spinning up a production incident…" : "Generating a design question…"}</div>`;
+  body.innerHTML = `<div class="card"><span class="thinking-dots"><span></span><span></span><span></span></span> ${m.spinning}</div>`;
   try {
-    const url = isDebug ? "/api/debug/incident" : "/api/interview/question";
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: topic, level: _ivLevel }) });
-    const d = await r.json(); _ivQuestion = isDebug ? d.incident : d.question; _ivTopic = d.topic_id;
-    body.innerHTML = `
-      <div class="card">
-        <div class="tile-kicker">${isDebug ? "Incident" : "Design question"} · ${esc(d.topic_title)} · ${esc(d.level)}</div>
-        <div class="prose-chat" style="margin:8px 0 14px">${renderMarkdown(_ivQuestion)}</div>
-        <textarea id="ivAnswer" class="input-area" rows="10" placeholder="${isDebug ? 'Diagnose it: hypotheses, what the logs/metrics tell you, the root cause, and the fix…' : 'Reason out loud: clarify requirements, identify bottlenecks, do the latency/throughput/memory math, name the tradeoffs…'}"></textarea>
-        <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="ivSubmit">Submit for evaluation</button></div>
-        <div id="ivResult" style="margin-top:14px"></div>
-      </div>`;
-    $("ivSubmit").addEventListener("click", ivSubmit);
-  } catch (_) { body.innerHTML = `<p class="view-subtitle">Could not generate a question. Try again.</p>`; }
+    const r = await fetch(m.gen, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: topic, level: _ivLevel }) });
+    const d = await r.json();
+    _ivQuestion = d[m.qkey]; _ivTopic = d.topic_id; _ivTopicTitle = d.topic_title || "";
+    ivRenderTurn();
+  } catch (_) { body.innerHTML = `<p class="view-subtitle">Could not start. Try again.</p>`; }
   finally { btn.disabled = false; }
 }
-async function ivSubmit() {
-  const ans = $("ivAnswer").value.trim(); if (!ans) { $("ivAnswer").focus(); return; }
+
+// Render the current question (plus prior transcript, for multi-turn) + answer box.
+function ivRenderTurn() {
+  const body = $("ivBody"), m = IV_MODES[_ivMode];
+  const multi = _ivMode === "interview";
+  const turnNo = _ivTranscript.length + 1;
+  const prior = multi && _ivTranscript.length
+    ? `<div class="card" style="background:var(--surface-2)"><div class="tile-kicker" style="margin-bottom:8px">Interview so far</div><div class="timeline">${
+        _ivTranscript.map((t, i) => `<div class="tl-item"><div class="tl-ico">${i === 0 ? "Q" : "↳"}</div><div class="tl-body"><div class="tl-label" style="white-space:normal">${esc(t.q)}</div><div class="tl-meta" style="white-space:normal;opacity:.8">${esc(t.a)}</div></div></div>`).join("")
+      }</div></div>` : "";
+  const qLabel = multi
+    ? (turnNo === 1 ? m.qlabel : `Follow-up ${turnNo - 1}`) + ` · turn ${turnNo} of up to ${IV_MAX_TURNS}`
+    : `${m.qlabel} · ${esc(_ivTopicTitle)} · ${esc(_ivLevel)}`;
+  // multi-turn: allow finishing early once at least one answer is in
+  const finishBtn = multi && _ivTranscript.length >= 1
+    ? `<button class="btn btn-ghost" id="ivFinish">Finish &amp; get verdict</button>` : "";
+  const primaryLabel = multi
+    ? (turnNo >= IV_MAX_TURNS ? "Submit final answer →" : "Answer →")
+    : "Submit for evaluation";
+  body.innerHTML = `
+    ${prior}
+    <div class="card">
+      <div class="tile-kicker">${qLabel}</div>
+      <div class="prose-chat" style="margin:8px 0 14px">${renderMarkdown(_ivQuestion)}</div>
+      <textarea id="ivAnswer" class="input-area" rows="${multi ? 7 : 10}" placeholder="${m.placeholder}"></textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px">${finishBtn}<button class="btn btn-primary" id="ivSubmit">${primaryLabel}</button></div>
+      <div id="ivResult" style="margin-top:14px"></div>
+    </div>`;
+  $("ivSubmit").addEventListener("click", () => ivStep(false));
+  $("ivFinish")?.addEventListener("click", () => ivStep(true));
+}
+
+// One step of the interview: for debug/forward this grades immediately; for the
+// multi-turn design interview it either asks a follow-up or finalizes the verdict.
+async function ivStep(finalize) {
+  const ansEl = $("ivAnswer"); const ans = ansEl.value.trim();
+  if (!ans) { ansEl.focus(); return; }
   const res = $("ivResult"), btn = $("ivSubmit"); btn.disabled = true;
-  res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The AI judge is grading…`;
-  try {
-    const isDebug = _ivMode === "debug";
-    const url = isDebug ? "/api/debug/evaluate" : "/api/interview/evaluate";
-    const payload = isDebug
+  const m = IV_MODES[_ivMode];
+
+  if (_ivMode !== "interview") {
+    res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The AI judge is grading…`;
+    const payload = _ivMode === "debug"
       ? { student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, incident: _ivQuestion, diagnosis: ans }
-      : { student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, question: _ivQuestion, answer: ans };
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    const ev = await r.json();
-    res.innerHTML = ivReport(ev);
-    res.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
-    res.querySelector(".iv-next")?.addEventListener("click", () => { if (_ivTopic) seedChat(_ivTopic); });
-  } catch (_) { res.innerHTML = `<p style="color:var(--bad)">Evaluation failed. Try again.</p>`; }
-  finally { btn.disabled = false; }
+      : { student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, scenario: _ivQuestion, response: ans };
+    try { const r = await fetch(m.evalUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); ivShowReport(await r.json(), res); }
+    catch (_) { res.innerHTML = `<p style="color:var(--bad)">Evaluation failed. Try again.</p>`; btn.disabled = false; }
+    return;
+  }
+
+  // multi-turn design interview
+  _ivTranscript.push({ q: _ivQuestion, a: ans });
+  const done = finalize || _ivTranscript.length >= IV_MAX_TURNS;
+  if (done) {
+    res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The AI judge is grading the full interview…`;
+    try {
+      const r = await fetch(m.evalUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, transcript: _ivTranscript }) });
+      ivShowReport(await r.json(), res);
+    } catch (_) { res.innerHTML = `<p style="color:var(--bad)">Evaluation failed. Try again.</p>`; btn.disabled = false; }
+    return;
+  }
+  // otherwise ask a follow-up probe
+  res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The interviewer is thinking of a follow-up…`;
+  try {
+    const r = await fetch("/api/interview/followup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, transcript: _ivTranscript }) });
+    const d = await r.json();
+    _ivQuestion = d.question;
+    ivRenderTurn();
+  } catch (_) { res.innerHTML = `<p style="color:var(--bad)">Could not generate a follow-up. Try again.</p>`; btn.disabled = false; }
+}
+
+function ivShowReport(ev, res) {
+  res.innerHTML = ivReport(ev);
+  res.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+  res.querySelector(".iv-next")?.addEventListener("click", () => { if (_ivTopic) seedChat(_ivTopic); });
 }
 function ivReport(ev) {
   const pct = ev.overall_score || 0;
@@ -1650,7 +1741,7 @@ function ivReport(ev) {
     <div class="grid-cards grid-2">
       <div class="card"><div style="display:flex;align-items:center;gap:16px">
         <div style="font-family:var(--font-display);font-size:42px;font-weight:700;color:var(--${col})">${pct}</div>
-        <div><div class="tile-kicker">Overall / 100</div><div class="tile-sub">Next: <b>${esc(ev.next_topic || "")}</b> · ${esc((ev.recommended_exercise_type || "").replace(/_/g, " "))}</div>
+        <div><div class="tile-kicker">Overall / 100${ev.turns ? ` · ${ev.turns}-turn interview` : ""}</div><div class="tile-sub">Next: <b>${esc(ev.next_topic || "")}</b> · ${esc((ev.recommended_exercise_type || "").replace(/_/g, " "))}</div>
         <button class="btn btn-ghost btn-sm iv-next" style="margin-top:8px">Drill the gap →</button></div>
       </div></div>
       <div class="card">${cats}</div>

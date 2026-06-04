@@ -1,6 +1,11 @@
 version: 1
-description: "Learning Memory OS curriculum — 38 topics across 7 areas"
+description: "Memex ML-systems curriculum — 38 topics across 7 areas"
 
+# Teaching sequence (interview-prep order, applied in the UI via the area ranking):
+#   A fundamentals + resource accounting → C inference serving → B training systems
+#   → F production ops/observability/cost → D data & alignment → E agents → G design.
+# This is inference-first on purpose: the ML-infra interview bar lives in serving, so
+# the serving stack is taught right after fundamentals, not after all of training.
 areas:
   A: "Model fundamentals (CS336 L1-L4)"
   B: "Training systems (CS336 L5-L8, L11)"
@@ -26,18 +31,21 @@ topics:
       - "data/curriculum/cs336_l03_architecture.md"
     prerequisites: [tokenization]
 
-  - id: attention_moe
-    area: A
-    title: "Attention variants & MoE"
-    sources:
-      - "data/curriculum/cs336_l04_attention_moe.md"
-    prerequisites: [transformer_architecture]
-
+  # Resource accounting is taught EARLY — quantitative reasoning (FLOPs, memory
+  # bandwidth, arithmetic intensity) is the load-bearing skill the whole inference
+  # curriculum builds on, so it comes before attention variants.
   - id: resource_accounting
     area: A
     title: "Resource accounting (FLOPs, memory, arithmetic intensity)"
     sources:
       - "data/curriculum/cs336_l02_resource_accounting.md"
+    prerequisites: [transformer_architecture]
+
+  - id: attention_moe
+    area: A
+    title: "Attention variants & MoE"
+    sources:
+      - "data/curriculum/cs336_l04_attention_moe.md"
     prerequisites: [transformer_architecture]
 
   - id: gpu_kernels
@@ -86,22 +94,9 @@ topics:
       - "data/seed_topics/cs336_l10_inference/source.md"
     prerequisites: [attention_moe]
 
-  - id: quantization
-    area: C
-    title: "Quantization (int8/int4, GPTQ/AWQ)"
-    sources:
-      - "data/seed_topics/cs336_l10_inference/source.md"
-      - "data/curriculum/cs349d_quantization.md"
-    prerequisites: [resource_accounting]
-
-  - id: speculative_decoding
-    area: C
-    title: "Speculative decoding"
-    sources:
-      - "data/seed_topics/cs336_l10_inference/source.md"
-      - "data/curriculum/cs349d_speculative.md"
-    prerequisites: [kv_cache]
-
+  # Serving loop first (how requests actually flow), THEN quantization — the
+  # expert's inference teaching order: KV cache → batching → prefill/decode
+  # disaggregation → speculative decoding → quantization.
   - id: continuous_batching
     area: C
     title: "Continuous batching & request scheduling"
@@ -116,6 +111,22 @@ topics:
     sources:
       - "data/curriculum/cs349d_disaggregation.md"
     prerequisites: [continuous_batching]
+
+  - id: speculative_decoding
+    area: C
+    title: "Speculative decoding"
+    sources:
+      - "data/seed_topics/cs336_l10_inference/source.md"
+      - "data/curriculum/cs349d_speculative.md"
+    prerequisites: [kv_cache]
+
+  - id: quantization
+    area: C
+    title: "Quantization (int8/int4, GPTQ/AWQ)"
+    sources:
+      - "data/seed_topics/cs336_l10_inference/source.md"
+      - "data/curriculum/cs349d_quantization.md"
+    prerequisites: [resource_accounting]
 
   - id: pretraining_data
     area: D

@@ -1113,8 +1113,18 @@ class InterviewEvalRequest(BaseModel):
     student_id: str
     topic_id: Optional[str] = None
     level: str = "intermediate"
-    question: str
-    answer: str
+    question: str = ""
+    answer: str = ""
+    # Multi-turn: ordered [{"q","a"}, ...]. When present, the judge grades the whole
+    # conversation and we persist the formatted transcript instead of a single Q/A.
+    transcript: Optional[list[dict]] = None
+
+
+class InterviewFollowupRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+    transcript: list[dict]  # [{"q","a"}, ...] so far
 
 
 @app.post("/api/interview/question")
@@ -1144,6 +1154,20 @@ def interview_question(req: InterviewQuestionRequest):
     return {"topic_id": topic_id, "topic_title": topic_title, "level": req.level, "question": q}
 
 
+@app.post("/api/interview/followup")
+def interview_followup(req: InterviewFollowupRequest):
+    """Mid-interview probe: given the transcript so far, ask the next follow-up that
+    drills into the weakest part of the candidate's latest answer."""
+    from learning_memory_os.agents.interview import InterviewAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_title = title_by_id.get(req.topic_id, req.topic_id or "ML systems")
+    q = InterviewAgent(llm).followup(
+        topic_title=topic_title, level=req.level, transcript=req.transcript,
+    )
+    return {"topic_id": req.topic_id, "topic_title": topic_title, "question": q}
+
+
 @app.post("/api/interview/evaluate")
 def interview_evaluate(req: InterviewEvalRequest):
     """Judge a design answer (structured rubric), persist it, update the skill
@@ -1159,16 +1183,24 @@ def interview_evaluate(req: InterviewEvalRequest):
         style = build_profile(conn, req.student_id).learning_style or None
         ev = InterviewAgent(llm).evaluate(
             question=req.question, answer=req.answer, topic_title=topic_title,
-            level=req.level, profile_summary=style,
+            level=req.level, profile_summary=style, transcript=req.transcript,
         )
         overall = int(ev.get("overall_score") or 0)
+        # Persist the conversation: for a multi-turn interview store the flattened
+        # transcript so the readiness verdict + history reflect the full exchange.
+        if req.transcript:
+            ev["turns"] = len(req.transcript)
+            store_q = "\n\n".join((t.get("q") or "") for t in req.transcript)
+            store_a = "\n\n".join((t.get("a") or "") for t in req.transcript)
+        else:
+            store_q, store_a = req.question, req.answer
 
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO interview_evaluations "
                 "(student_id, topic_id, level, question, answer, overall_score, evaluation) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
-                (req.student_id, req.topic_id, req.level, req.question, req.answer,
+                (req.student_id, req.topic_id, req.level, store_q, store_a,
                  overall, json.dumps(ev)),
             )
             concept_ids = []
@@ -1311,6 +1343,98 @@ def debug_evaluate(req: DebugEvalRequest):
             cur.execute(
                 "INSERT INTO tutor_reflections (student_id, summary, payload) VALUES (%s, %s, %s::jsonb)",
                 (req.student_id, reflection, json.dumps({"kind": "debug", "topic_id": req.topic_id, "overall": overall})),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ev
+
+
+# ── Forward-deployed engineer mode ─────────────────────────────────────────────
+class ForwardScenarioRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+
+
+class ForwardEvalRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+    scenario: str
+    response: str
+
+
+@app.post("/api/forward/scenario")
+def forward_scenario(req: ForwardScenarioRequest):
+    """Generate a vague customer scenario ('our AI agent feels slow') for the
+    forward-deployed engineer exercise."""
+    from learning_memory_os.agents.interview import ForwardDeployedAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_id = req.topic_id or _weakest_topic(req.student_id)
+    topic_title = title_by_id.get(topic_id, topic_id or "ML systems")
+    sc = ForwardDeployedAgent(llm).generate_scenario(topic_title=topic_title, level=req.level)
+    return {"topic_id": topic_id, "topic_title": topic_title, "level": req.level, "scenario": sc}
+
+
+@app.post("/api/forward/evaluate")
+def forward_evaluate(req: ForwardEvalRequest):
+    """Grade how the candidate handled the customer problem across the 7
+    forward-deployed sub-skills; persist + update skill model + reflect."""
+    from learning_memory_os.agents.interview import ForwardDeployedAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_title = title_by_id.get(req.topic_id, req.topic_id or "ML systems")
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(req.student_id)
+        style = build_profile(conn, req.student_id).learning_style or None
+        ev = ForwardDeployedAgent(llm).evaluate(
+            scenario=req.scenario, response=req.response, topic_title=topic_title,
+            level=req.level, profile_summary=style,
+        )
+        ev["kind"] = "forward"
+        overall = int(ev.get("overall_score") or 0)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO interview_evaluations "
+                "(student_id, topic_id, level, question, answer, overall_score, evaluation) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
+                (req.student_id, req.topic_id, req.level, req.scenario, req.response,
+                 overall, json.dumps(ev)),
+            )
+            concept_ids = []
+            if req.topic_id:
+                cur.execute(
+                    "SELECT id::text FROM semantic_items WHERE topic_id = %s "
+                    "AND artifact_type = 'concept' LIMIT 6",
+                    (req.topic_id,),
+                )
+                concept_ids = [r["id"] for r in cur.fetchall()]
+        for cid in concept_ids:
+            student.update_mastery(req.student_id, cid, overall / 100.0, 0.4)
+        for m in (ev.get("misconceptions") or [])[:5]:
+            desc = (m.get("description") or "").strip()
+            if desc:
+                student.record_misconception(
+                    req.student_id, concept_id=None, description=desc[:300],
+                    evidence=(m.get("concept") or None), topic_id=req.topic_id,
+                )
+        EpisodicStore(conn).append(
+            student_id=req.student_id, event_type="forward_attempt",
+            payload={"topic_id": req.topic_id, "overall_score": overall},
+        )
+        weak = sorted((ev.get("category_scores") or {}).items(), key=lambda kv: kv[1])[:3]
+        reflection = (
+            f"Forward-deployed scenario on {topic_title}: scored {overall}/100. "
+            f"Weakest: {', '.join(k for k, _ in weak)}. Next: {ev.get('next_topic', '')}."
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tutor_reflections (student_id, summary, payload) VALUES (%s, %s, %s::jsonb)",
+                (req.student_id, reflection, json.dumps({"kind": "forward", "topic_id": req.topic_id, "overall": overall})),
             )
         conn.commit()
     finally:
