@@ -1,0 +1,13 @@
+# Web-only deps for the Vercel serverless function. Deliberately EXCLUDES the ML
+# stack (torch/transformers/peft/...) so the function stays under Vercel's 250 MB
+# limit — the API never imports those at runtime (the fine-tuned router is the only
+# consumer and is lazily imported; in prod it just falls back to the heuristic).
+fastapi==0.136.1
+pydantic==2.13.4
+pydantic-settings==2.14.1
+psycopg[binary]==3.3.4
+anthropic==0.102.0
+openai==2.36.0
+argon2-cffi==25.1.0
+stripe==15.2.0
+PyYAML==6.0.3
