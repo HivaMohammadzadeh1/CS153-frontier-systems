@@ -1,0 +1,36 @@
+# Render Blueprint: a Docker web service + a managed Postgres.
+# Deploy: push to GitHub, then in Render → "New +" → "Blueprint" → pick this repo.
+# Fill the `sync: false` secrets in the Render dashboard after the first deploy.
+services:
+  - type: web
+    name: memex
+    runtime: docker
+    plan: free          # free web service (spins down when idle)
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: memex-db
+          property: connectionString
+      - key: COOKIE_SECURE
+        value: "true"            # Render serves HTTPS
+      # Secrets — set these in the dashboard (Environment tab):
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: APP_BASE_URL          # e.g. https://memex.onrender.com (or your domain)
+        sync: false
+      - key: LMOS_PUBLIC_URL       # same value — used for Stripe success/cancel URLs
+        sync: false
+      - key: STRIPE_SECRET_KEY     # billing on once these three are set
+        sync: false
+      - key: STRIPE_PRICE_ID       # the $5 one-time price id
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+databases:
+  - name: memex-db
+    plan: free          # free Postgres (free for 90 days, then a small monthly fee)

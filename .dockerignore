@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+logs
+tmp
+data/merged
+data/router_checkpoints
+data/trajectories
+artifacts
+*.safetensors
+*.tar.gz
+*.pkg
+.env
