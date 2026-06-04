@@ -255,7 +255,7 @@ function substituteCitations(text, references) {
 }
 
 // ── Router / views ─────────────────────────────────────────────
-const VIEWS = ["home", "profile", "readiness", "chat", "progress", "path", "yourai"];
+const VIEWS = ["home", "profile", "readiness", "chat", "progress", "path", "yourai", "interview"];
 
 function showView(name, pushHash = true) {
   if (!VIEWS.includes(name)) name = "home";
@@ -268,6 +268,7 @@ function showView(name, pushHash = true) {
   if (name === "home") renderHome();
   else if (name === "profile") renderProfile();
   else if (name === "readiness") renderReadiness();
+  else if (name === "interview") renderInterview();
   else if (name === "progress") renderProgress();
   else if (name === "path") renderPath();
   else if (name === "yourai") renderYourAI();
@@ -1524,6 +1525,94 @@ async function upgradeIntent(source) {
   if (url) window.open(url, "_blank");
   else if (typeof toast === "function") toast(`✨ <span class="t-grad">You're on the Pro waitlist!</span>`);
   else alert("You're on the Pro waitlist!");
+}
+
+// ── Mock Interview (AI Judge) ──────────────────────────────────
+let _ivQuestion = null, _ivTopic = null, _ivLevel = "intermediate";
+async function renderInterview() {
+  const el = $("view-interview");
+  el.innerHTML = `
+    <div class="view-inner">
+      <div class="view-head">
+        <div class="view-eyebrow">Mock Interview</div>
+        <h1 class="view-title">ML-systems design interview</h1>
+        <p class="view-subtitle">Answer like a real interview. A staff-engineer AI judge scores you across 10 rubric categories, finds your misconceptions, and updates your skill model.</p>
+      </div>
+      <div class="card">
+        <div class="tile-kicker" style="margin-bottom:8px">Set up</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select id="ivLevel" class="topic-select">
+            <option value="beginner">Beginner</option>
+            <option value="intermediate" selected>Intermediate</option>
+            <option value="advanced">Advanced</option>
+          </select>
+          <select id="ivTopic" class="topic-select"><option value="">Weakest topic (auto)</option></select>
+          <button class="btn btn-primary" id="ivGen">Generate question →</button>
+        </div>
+      </div>
+      <div id="ivBody"></div>
+    </div>`;
+  const ts = $("ivTopic");
+  Object.entries(TOPIC_MAP).forEach(([id, m]) => { const o = document.createElement("option"); o.value = id; o.textContent = m.title; ts.appendChild(o); });
+  $("ivGen").addEventListener("click", ivGenerate);
+}
+async function ivGenerate() {
+  const body = $("ivBody"), btn = $("ivGen");
+  _ivLevel = $("ivLevel").value;
+  const topic = $("ivTopic").value || null;
+  btn.disabled = true;
+  body.innerHTML = `<div class="card"><span class="thinking-dots"><span></span><span></span><span></span></span> Generating a design question…</div>`;
+  try {
+    const r = await fetch("/api/interview/question", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: topic, level: _ivLevel }) });
+    const d = await r.json(); _ivQuestion = d.question; _ivTopic = d.topic_id;
+    body.innerHTML = `
+      <div class="card">
+        <div class="tile-kicker">Design question · ${esc(d.topic_title)} · ${esc(d.level)}</div>
+        <div class="prose-chat" style="margin:8px 0 14px">${renderMarkdown(d.question)}</div>
+        <textarea id="ivAnswer" class="input-area" rows="10" placeholder="Reason out loud: clarify requirements, identify bottlenecks, do the latency/throughput/memory math, name the tradeoffs…"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="ivSubmit">Submit for evaluation</button></div>
+        <div id="ivResult" style="margin-top:14px"></div>
+      </div>`;
+    $("ivSubmit").addEventListener("click", ivSubmit);
+  } catch (_) { body.innerHTML = `<p class="view-subtitle">Could not generate a question. Try again.</p>`; }
+  finally { btn.disabled = false; }
+}
+async function ivSubmit() {
+  const ans = $("ivAnswer").value.trim(); if (!ans) { $("ivAnswer").focus(); return; }
+  const res = $("ivResult"), btn = $("ivSubmit"); btn.disabled = true;
+  res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The AI judge is grading…`;
+  try {
+    const r = await fetch("/api/interview/evaluate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, question: _ivQuestion, answer: ans }) });
+    const ev = await r.json();
+    res.innerHTML = ivReport(ev);
+    res.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+    res.querySelector(".iv-next")?.addEventListener("click", () => { if (_ivTopic) seedChat(_ivTopic); });
+  } catch (_) { res.innerHTML = `<p style="color:var(--bad)">Evaluation failed. Try again.</p>`; }
+  finally { btn.disabled = false; }
+}
+function ivReport(ev) {
+  const pct = ev.overall_score || 0;
+  const col = pct >= 70 ? "good" : pct >= 40 ? "warn" : "bad";
+  const cats = Object.entries(ev.category_scores || {}).map(([k, v]) =>
+    `<div class="bar-row"><span class="lbl">${esc(k.replace(/_/g, " "))}</span><span class="pct">${v}</span><div class="bar ${v >= 70 ? "good" : v >= 40 ? "warn" : "bad"}"><i data-w="${v}"></i></div></div>`).join("");
+  const list = (arr, ic) => ((arr || []).slice(0, 5).map((x) =>
+    `<div class="tl-item"><div class="tl-ico">${ic}</div><div class="tl-body"><div class="tl-label" style="white-space:normal">${esc(typeof x === "string" ? x : (x.description || ""))}</div></div></div>`).join("") || '<p class="view-subtitle">—</p>');
+  return `
+    <div class="section-label">Evaluation</div>
+    <div class="grid-cards grid-2">
+      <div class="card"><div style="display:flex;align-items:center;gap:16px">
+        <div style="font-family:var(--font-display);font-size:42px;font-weight:700;color:var(--${col})">${pct}</div>
+        <div><div class="tile-kicker">Overall / 100</div><div class="tile-sub">Next: <b>${esc(ev.next_topic || "")}</b> · ${esc((ev.recommended_exercise_type || "").replace(/_/g, " "))}</div>
+        <button class="btn btn-ghost btn-sm iv-next" style="margin-top:8px">Drill the gap →</button></div>
+      </div></div>
+      <div class="card">${cats}</div>
+    </div>
+    <div class="grid-cards grid-2" style="margin-top:8px">
+      <div class="card"><div class="tile-kicker" style="margin-bottom:8px">💪 Strengths</div><div class="timeline">${list(ev.strengths, "✓")}</div></div>
+      <div class="card"><div class="tile-kicker" style="margin-bottom:8px">🎯 Weaknesses</div><div class="timeline">${list(ev.weaknesses, "•")}</div></div>
+    </div>
+    <div class="card" style="margin-top:8px"><div class="tile-kicker" style="margin-bottom:8px">⚠ Detected misconceptions</div><div class="timeline">${list(ev.misconceptions, "⚠")}</div></div>
+    <details class="card" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">📝 See a senior-level model answer</summary><div class="prose-chat" style="margin-top:10px">${renderMarkdown(ev.improved_answer || "")}</div></details>`;
 }
 
 // ── Init ───────────────────────────────────────────────────────

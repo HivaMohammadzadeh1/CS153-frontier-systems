@@ -1005,6 +1005,118 @@ def quiz_score(req: QuizScoreRequest, request: Request):
     return QuizScoreResponse(score=result.score, rationale=result.rationale)
 
 
+# ── Design-interview AI Judge (AI Frontiers Lab) ───────────────────────────────
+class InterviewQuestionRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+    goal: Optional[str] = None
+
+
+class InterviewEvalRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+    question: str
+    answer: str
+
+
+@app.post("/api/interview/question")
+def interview_question(req: InterviewQuestionRequest):
+    """Generate an open-ended ML-systems design question, targeting the student's
+    weakest studied topic by default."""
+    from learning_memory_os.agents.interview import InterviewAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_id = req.topic_id
+    if not topic_id:
+        conn = connect(_settings().database_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT s.topic_id AS t, avg(m.score) AS a FROM mastery m "
+                    "JOIN semantic_items s ON s.id = m.concept_id "
+                    "WHERE m.student_id = %s GROUP BY s.topic_id ORDER BY a ASC LIMIT 1",
+                    (req.student_id,),
+                )
+                row = cur.fetchone()
+                topic_id = row["t"] if row else (_TOPICS[0].id if _TOPICS else None)
+        finally:
+            conn.close()
+    topic_title = title_by_id.get(topic_id, topic_id or "ML systems")
+    q = InterviewAgent(llm).generate_question(topic_title=topic_title, level=req.level, goal=req.goal)
+    return {"topic_id": topic_id, "topic_title": topic_title, "level": req.level, "question": q}
+
+
+@app.post("/api/interview/evaluate")
+def interview_evaluate(req: InterviewEvalRequest):
+    """Judge a design answer (structured rubric), persist it, update the skill
+    model from the score, record misconceptions, and store a tutor reflection."""
+    from learning_memory_os.agents.interview import InterviewAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_title = title_by_id.get(req.topic_id, req.topic_id or "ML systems")
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(req.student_id)
+        style = build_profile(conn, req.student_id).learning_style or None
+        ev = InterviewAgent(llm).evaluate(
+            question=req.question, answer=req.answer, topic_title=topic_title,
+            level=req.level, profile_summary=style,
+        )
+        overall = int(ev.get("overall_score") or 0)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO interview_evaluations "
+                "(student_id, topic_id, level, question, answer, overall_score, evaluation) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
+                (req.student_id, req.topic_id, req.level, req.question, req.answer,
+                 overall, json.dumps(ev)),
+            )
+            concept_ids = []
+            if req.topic_id:
+                cur.execute(
+                    "SELECT id::text FROM semantic_items WHERE topic_id = %s "
+                    "AND artifact_type = 'concept' LIMIT 6",
+                    (req.topic_id,),
+                )
+                concept_ids = [r["id"] for r in cur.fetchall()]
+        # Skill-model update: blend the interview score into topic mastery.
+        for cid in concept_ids:
+            student.update_mastery(req.student_id, cid, overall / 100.0, 0.4)
+        # Record detected misconceptions as durable, evidence-tagged notes.
+        for m in (ev.get("misconceptions") or [])[:5]:
+            desc = (m.get("description") or "").strip()
+            if desc:
+                student.record_misconception(
+                    req.student_id, concept_id=None, description=desc[:300],
+                    evidence=(m.get("concept") or None), topic_id=req.topic_id,
+                )
+        EpisodicStore(conn).append(
+            student_id=req.student_id, event_type="interview_attempt",
+            payload={"topic_id": req.topic_id, "overall_score": overall},
+        )
+        # Self-improvement: persist a structured tutor reflection.
+        weak = sorted((ev.get("category_scores") or {}).items(), key=lambda kv: kv[1])[:3]
+        reflection = (
+            f"Interview on {topic_title}: scored {overall}/100. "
+            f"Weakest: {', '.join(k for k, _ in weak)}. "
+            f"Next: {ev.get('recommended_exercise_type', 'mock_interview')} on {ev.get('next_topic', '')}."
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tutor_reflections (student_id, summary, payload) VALUES (%s, %s, %s::jsonb)",
+                (req.student_id, reflection,
+                 json.dumps({"topic_id": req.topic_id, "overall": overall, "next_topic": ev.get("next_topic")})),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ev
+
+
 class DiagnosticStartRequest(BaseModel):
     original_question: str
     rubric: str
