@@ -136,6 +136,25 @@ def _llm_and_embedder(model: Optional[str] = None):
     return llm, Embedder(api_key=s.openai_api_key)
 
 
+# Questions that warrant the stronger (slower) model — quantitative reasoning, "why",
+# tradeoffs. Everything else stays on the fast model for responsiveness.
+_DEEP_TUTOR_RE = re.compile(
+    r"\b(why|how many|how much|estimate|calculat|derive|prove|compare|trade-?off|"
+    r"flops?|bytes?|bandwidth|arithmetic intensity|p9\d|latency|throughput|memory|"
+    r"kv[- ]?cache|prefill|decode|quantiz)\w*", re.IGNORECASE,
+)
+
+
+def _chat_model_for(question: str) -> str:
+    """Pick the chat model: escalate to the deeper model for depth-heavy questions,
+    otherwise use the fast tutor model."""
+    s = _settings()
+    q = question or ""
+    if len(q) > 280 or any(ch.isdigit() for ch in q) or _DEEP_TUTOR_RE.search(q):
+        return s.tutor_model_deep
+    return s.tutor_model
+
+
 _TOPICS = load_topics(_PROJECT_ROOT / "config" / "topics.yaml")
 
 _AREA_NAMES: dict[str, str] = (
@@ -1010,7 +1029,7 @@ def _finalize_turn(conn, req: ChatRequest, llm, logger, p: dict, reply_text: str
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest, request: Request):
     req.student_id = request.state.username   # never trust a client-supplied identity
-    llm, embedder = _llm_and_embedder(_settings().tutor_model)
+    llm, embedder = _llm_and_embedder(_chat_model_for(req.question))
     engine = RoutingEngine()
     s = _settings()
     logger = InteractionLogger(path=s.log_dir / "interactions.jsonl")
@@ -1082,7 +1101,7 @@ def chat_stream(req: ChatRequest, request: Request):
     """Same as /api/chat but streams the reply token-by-token via SSE, then sends
     a final `{"done": true, ...}` event with references/selection/conversation_id."""
     req.student_id = request.state.username
-    llm, embedder = _llm_and_embedder(_settings().tutor_model)
+    llm, embedder = _llm_and_embedder(_chat_model_for(req.question))
     engine = RoutingEngine()
     s = _settings()
     logger = InteractionLogger(path=s.log_dir / "interactions.jsonl")
@@ -1626,7 +1645,18 @@ class ForwardEvalRequest(BaseModel):
     topic_id: Optional[str] = None
     level: str = "intermediate"
     scenario: str
-    response: str
+    response: str = ""
+    # Interactive session: ordered [{"student","customer"}, ...]. When present, the
+    # judge grades how the engineer DROVE the diagnosis, not just a written plan.
+    transcript: Optional[list[dict]] = None
+
+
+class ForwardRespondRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    scenario: str
+    transcript: list[dict] = []   # prior [{"student","customer"}] exchanges
+    message: str                   # the engineer's latest message
 
 
 @app.post("/api/forward/scenario")
@@ -1640,6 +1670,21 @@ def forward_scenario(req: ForwardScenarioRequest):
     topic_title = title_by_id.get(topic_id, topic_id or "ML systems")
     sc = ForwardDeployedAgent(llm).generate_scenario(topic_title=topic_title, level=req.level)
     return {"topic_id": topic_id, "topic_title": topic_title, "level": req.level, "scenario": sc}
+
+
+@app.post("/api/forward/respond")
+def forward_respond(req: ForwardRespondRequest):
+    """Interactive forward-deployed turn: the AI customer/system replies to the
+    engineer, revealing metrics only when the right diagnostic question is asked."""
+    from learning_memory_os.agents.interview import ForwardDeployedAgent
+    llm, _ = _llm_and_embedder(_settings().tutor_model)  # fast model is fine for the customer sim
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_title = title_by_id.get(req.topic_id, req.topic_id or "ML systems")
+    reply = ForwardDeployedAgent(llm).respond(
+        scenario=req.scenario, transcript=req.transcript, message=req.message,
+        topic_title=topic_title,
+    )
+    return {"reply": reply}
 
 
 @app.post("/api/forward/evaluate")
@@ -1658,18 +1703,27 @@ def forward_evaluate(req: ForwardEvalRequest):
         try:
             ev = ForwardDeployedAgent(llm).evaluate(
                 scenario=req.scenario, response=req.response, topic_title=topic_title,
-                level=req.level, profile_summary=style,
+                level=req.level, profile_summary=style, transcript=req.transcript,
             )
         except ValueError:
             raise HTTPException(status_code=502, detail="The AI judge did not return an evaluation. Please try again.")
         ev["kind"] = "forward"
+        if req.transcript:
+            ev["turns"] = len(req.transcript)
         overall = int(ev.get("overall_score") or 0)
+        # Persist the engineer's side of the conversation (+ final diagnosis) as the answer.
+        if req.transcript:
+            store_ans = "\n\n".join(
+                f"Q: {t.get('student','')}\nA: {t.get('customer','')}" for t in req.transcript
+            ) + (f"\n\nFINAL DIAGNOSIS:\n{req.response}" if req.response else "")
+        else:
+            store_ans = req.response
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO interview_evaluations "
                 "(student_id, topic_id, level, question, answer, overall_score, evaluation) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
-                (req.student_id, req.topic_id, req.level, req.scenario, req.response,
+                (req.student_id, req.topic_id, req.level, req.scenario, store_ans,
                  overall, json.dumps(ev)),
             )
             concept_ids = []

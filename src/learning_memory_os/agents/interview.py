@@ -8,6 +8,7 @@ from .interview_prompts import (
     INTERVIEWER_SYSTEM, INTERVIEW_FOLLOWUP_SYSTEM, JUDGE_SYSTEM, EVALUATION_SCHEMA, CATEGORIES,
     DEBUG_INCIDENT_SYSTEM, DEBUG_JUDGE_SYSTEM, DEBUG_EVAL_SCHEMA, DEBUG_CATEGORIES,
     FORWARD_SCENARIO_SYSTEM, FORWARD_JUDGE_SYSTEM, FORWARD_EVAL_SCHEMA, FORWARD_CATEGORIES,
+    FORWARD_CUSTOMER_SYSTEM,
     weighted_overall,
 )
 
@@ -163,13 +164,45 @@ class ForwardDeployedAgent:
         user = f"Topic to ground it in: {topic_title}\nLevel: {level}.\n\nWrite the customer scenario now."
         return self.llm.complete(system=FORWARD_SCENARIO_SYSTEM, user=user, max_tokens=600).strip()
 
-    def evaluate(self, *, scenario: str, response: str, topic_title: str,
-                 level: str = "intermediate", profile_summary: str | None = None) -> dict:
+    def respond(self, *, scenario: str, transcript: list[dict], message: str,
+                topic_title: str) -> str:
+        """Customer/system reply in an INTERACTIVE forward-deployed session — reveals
+        metrics only when the engineer asks the right diagnostic question. `transcript`
+        is prior [{"student","customer"}] exchanges; `message` is the engineer's latest."""
+        convo = "\n".join(
+            "ENGINEER: {}\nCUSTOMER/SYSTEM: {}".format(t.get("student", ""), t.get("customer", ""))
+            for t in (transcript or [])
+        )
+        convo_block = f"CONVERSATION SO FAR:\n{convo}\n\n" if convo else ""
+        user = (
+            f"TOPIC: {topic_title}\n\nORIGINAL SCENARIO:\n{scenario}\n\n"
+            f"{convo_block}"
+            f"ENGINEER'S LATEST MESSAGE:\n{message}\n\n"
+            "Reply now as the customer/system."
+        )
+        return self.llm.complete(system=FORWARD_CUSTOMER_SYSTEM, user=user, max_tokens=400).strip()
+
+    def evaluate(self, *, scenario: str, response: str = "", topic_title: str,
+                 level: str = "intermediate", profile_summary: str | None = None,
+                 transcript: list[dict] | None = None) -> dict:
         ctx = f"\nWhat we know about this student: {profile_summary}" if profile_summary else ""
+        if transcript:
+            convo = "\n".join(
+                f"ENGINEER: {t.get('student','')}\nCUSTOMER/SYSTEM: {t.get('customer','')}"
+                for t in transcript
+            )
+            handling = (
+                "This was an INTERACTIVE session. Grade how the engineer DROVE it — did they "
+                "ask for the right metrics before guessing, localize from the evidence, and "
+                "land a fix + customer explanation?\n\n"
+                f"CONVERSATION:\n{convo}" + (f"\n\nFINAL DIAGNOSIS:\n{response}" if response else "")
+            )
+        else:
+            handling = f"CANDIDATE'S HANDLING (questions asked, diagnosis, fix, customer explanation):\n{response}"
         user = (
             f"TOPIC: {topic_title}\nLEVEL: {level}{ctx}\n\n"
             f"CUSTOMER SCENARIO (what the candidate was given):\n{scenario}\n\n"
-            f"CANDIDATE'S HANDLING (questions asked, diagnosis, fix, customer explanation):\n{response}\n\n"
+            f"{handling}\n\n"
             "Grade the 7 forward-deployed sub-skills strictly and return the structured evaluation."
         )
         ev = self.llm.complete_with_schema(

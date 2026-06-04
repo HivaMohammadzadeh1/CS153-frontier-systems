@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Forced "show your reasoning" pass before the answer. It's a nice thought-process
     # box but adds a few seconds of latency per turn; off by default for responsiveness.
     tutor_reasoning: bool = Field(default=False, alias="LMOS_TUTOR_REASONING")
+    # Stronger model the chat auto-escalates to for depth-heavy questions (quantitative
+    # reasoning, "why", tradeoffs). Keeps the fast model for everything else.
+    tutor_model_deep: str = Field(default="claude-sonnet-4-6", alias="LMOS_TUTOR_MODEL_DEEP")
     log_dir: Path = Field(default=Path("./logs"), alias="LMOS_LOG_DIR")
     default_token_budget: int = Field(default=8000, alias="LMOS_DEFAULT_TOKEN_BUDGET")
     xtrace_api_key: str | None = Field(default=None, alias="XTRACE_API_KEY")

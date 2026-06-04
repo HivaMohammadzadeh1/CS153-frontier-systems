@@ -1644,7 +1644,7 @@ const IV_MODES = {
   },
   forward: {
     title: "Forward-deployed engineer", eyebrow: "Customer scenario",
-    sub: "A customer reports a vague problem (\"our agent feels slow\"). You're graded on the 7 forward-deployed sub-skills: framing, asking for the right metrics, localizing, iterating, the fix, its cost/SLA tradeoff, and explaining it to a non-expert.",
+    sub: "A customer reports a vague problem (\"our agent feels slow\") and you drive an interactive diagnosis — the system reveals metrics only when you ask the right question. Graded on the 7 forward-deployed sub-skills: framing, asking for the right metrics, localizing, iterating, the fix, its cost/SLA tradeoff, and explaining it to a non-expert.",
     gen: "/api/forward/scenario", qkey: "scenario", evalUrl: "/api/forward/evaluate",
     qlabel: "Customer says", spinning: "Drafting a customer scenario…",
     placeholder: "Handle the customer: what metrics do you ask for, how do you localize the bottleneck, what's the fix + its cost/SLA tradeoff, and how do you explain it to them in plain language?",
@@ -1796,9 +1796,65 @@ async function ivGenerate() {
     const r = await fetch(m.gen, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: topic, level: _ivLevel }) });
     const d = await r.json();
     _ivQuestion = d[m.qkey]; _ivTopic = d.topic_id; _ivTopicTitle = d.topic_title || "";
-    ivRenderTurn();
+    if (_ivMode === "forward") { _ivFwd = []; ivRenderForward(); }
+    else ivRenderTurn();
   } catch (_) { body.innerHTML = `<p class="view-subtitle">Could not start. Try again.</p>`; }
   finally { btn.disabled = false; }
+}
+
+// ── Interactive forward-deployed session ───────────────────────
+// The AI customer/system reveals metrics only when the engineer asks the right
+// diagnostic question; the engineer drives toward a diagnosis, then submits.
+let _ivFwd = [];   // [{student, customer}]
+const IV_FWD_MAX = 8;
+function ivRenderForward() {
+  const body = $("ivBody");
+  const convo = _ivFwd.map((t) => `
+      <div class="fwd-msg fwd-eng"><span class="fwd-who">You</span>${renderMarkdown(t.student)}</div>
+      <div class="fwd-msg fwd-cust"><span class="fwd-who">Customer / system</span>${renderMarkdown(t.customer)}</div>`).join("");
+  const canSubmit = _ivFwd.length >= 1;
+  body.innerHTML = `
+    <div class="card">
+      <div class="tile-kicker">Customer says · ${esc(_ivTopicTitle)} · ${esc(_ivLevel)}</div>
+      <div class="prose-chat" style="margin:8px 0 6px">${renderMarkdown(_ivQuestion)}</div>
+      <div class="tile-sub" style="margin-bottom:10px">Ask for the metrics you need (TTFT vs decode, p99, GPU util, queue depth, KV/memory, cache-hit rate, what changed…). The system answers only when you ask the right question.</div>
+      <div id="fwdConvo">${convo}</div>
+      <textarea id="fwdInput" class="input-area" rows="3" placeholder="${_ivFwd.length ? "Ask another question, or request a metric…" : "Start by clarifying the problem or asking for a specific metric…"}"></textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px">
+        ${canSubmit ? `<button class="btn btn-ghost" id="fwdSubmit">Submit diagnosis &amp; get verdict</button>` : ""}
+        <button class="btn btn-primary" id="fwdSend">Send →</button>
+      </div>
+      <div id="ivResult" style="margin-top:14px"></div>
+    </div>`;
+  $("fwdSend").addEventListener("click", ivFwdSend);
+  $("fwdSubmit")?.addEventListener("click", ivFwdSubmit);
+  runMermaid($("fwdConvo"));
+  if (_ivFwd.length) $("fwdConvo").scrollIntoView({ block: "end", behavior: "smooth" });
+}
+async function ivFwdSend() {
+  const inp = $("fwdInput"), msg = inp.value.trim();
+  if (!msg) { inp.focus(); return; }
+  const btn = $("fwdSend"); btn.disabled = true; btn.textContent = "…";
+  try {
+    const r = await fetch("/api/forward/respond", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: state.studentId, topic_id: _ivTopic, scenario: _ivQuestion, transcript: _ivFwd, message: msg }) });
+    const d = await r.json();
+    _ivFwd.push({ student: msg, customer: d.reply || "(no response)" });
+    if (_ivFwd.length >= IV_FWD_MAX) { ivFwdSubmit(); return; }
+    ivRenderForward();
+  } catch (_) { btn.disabled = false; btn.textContent = "Send →"; if (typeof toast === "function") toast("Send failed — try again."); }
+}
+async function ivFwdSubmit() {
+  // Use any text still in the box as the final diagnosis.
+  const finalDiag = ($("fwdInput")?.value || "").trim();
+  const res = $("ivResult");
+  if (res) res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The AI judge is grading how you drove the diagnosis…`;
+  try {
+    const r = await fetch("/api/forward/evaluate", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, scenario: _ivQuestion, transcript: _ivFwd, response: finalDiag }) });
+    if (!r.ok) throw new Error("http " + r.status);
+    ivShowReport(await r.json(), res);
+  } catch (_) { if (res) res.innerHTML = `<p style="color:var(--bad)">Evaluation failed. Try again.</p>`; }
 }
 
 // Render the current question (plus prior transcript, for multi-turn) + answer box.

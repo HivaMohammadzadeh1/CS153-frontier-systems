@@ -32,10 +32,10 @@ topics:
     assert topics[1].sources == ["s1.md", "s2.md"]
 
 
-def test_load_topics_real_curriculum_has_38():
+def test_load_topics_real_curriculum_has_48():
     """Smoke test against the committed curriculum config."""
     topics = load_topics(Path("config/topics.yaml"))
-    assert len(topics) == 38
+    assert len(topics) == 48
     areas = {t.area for t in topics}
     assert areas == {"A", "B", "C", "D", "E", "F", "G"}
 

@@ -31,7 +31,7 @@ def test_list_topics():
     r = client.get("/api/topics")
     assert r.status_code == 200
     topics = r.json()
-    assert len(topics) == 38
+    assert len(topics) == 48
 
 
 # ── auth gate ────────────────────────────────────────────────────────────────

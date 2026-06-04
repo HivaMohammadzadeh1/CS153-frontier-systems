@@ -1,5 +1,5 @@
 version: 1
-description: "Memex ML-systems curriculum — 38 topics across 7 areas"
+description: "Memex ML-systems curriculum — 48 topics across 7 areas"
 
 # Teaching sequence (interview-prep order, applied in the UI via the area ranking):
 #   A fundamentals + resource accounting → C inference serving → B training systems
@@ -293,6 +293,80 @@ topics:
     sources:
       - "data/curriculum/long_context_methods.md"
     prerequisites: [attention_moe]
+
+  # ── Production LLM Serving Under Real Traffic (expert-recommended block) ──
+  # How serving systems behave under messy, bursty, multi-tenant production traffic —
+  # the gap most ML-infra interviews probe and most self-study curricula miss.
+  - id: slo_tail_latency
+    area: C
+    title: "SLOs & tail latency (TTFT vs TPOT, p95/p99 debugging)"
+    sources:
+      - "data/curriculum/slo_tail_latency.md"
+    prerequisites: [continuous_batching]
+
+  - id: prefix_caching
+    area: C
+    title: "Prefix & context caching (cache-hit rate, eviction, templates)"
+    sources:
+      - "data/curriculum/prefix_caching.md"
+    prerequisites: [kv_cache]
+
+  - id: admission_control
+    area: C
+    title: "Admission control & load shedding under burst"
+    sources:
+      - "data/curriculum/admission_control.md"
+    prerequisites: [multi_tenant_inference]
+
+  - id: serving_engine_internals
+    area: C
+    title: "Serving engine internals (vLLM, PagedAttention, scheduler, parallelism)"
+    sources:
+      - "data/curriculum/serving_engine_internals.md"
+    prerequisites: [continuous_batching]
+
+  - id: autoscaling_capacity
+    area: F
+    title: "Autoscaling & capacity planning for LLM serving"
+    sources:
+      - "data/curriculum/autoscaling_capacity.md"
+    prerequisites: [multi_tenant_inference]
+
+  - id: safe_rollout_regression
+    area: F
+    title: "Safe rollout & regression testing (quantization, kernel, model, prompt changes)"
+    sources:
+      - "data/curriculum/safe_rollout_regression.md"
+    prerequisites: [observability_for_ml]
+
+  # ── Additional CS336 (Language Modeling from Scratch) topics ──
+  - id: llm_evaluation
+    area: D
+    title: "LLM evaluation (benchmarks, perplexity, contamination, LM-as-judge)"
+    sources:
+      - "data/curriculum/cs336_l12_evaluation.md"
+    prerequisites: [pretraining_data]
+
+  - id: mixed_precision_numerics
+    area: B
+    title: "Mixed precision & numerics (bf16/fp8, loss scaling, stability)"
+    sources:
+      - "data/curriculum/cs336_mixed_precision.md"
+    prerequisites: [resource_accounting]
+
+  - id: optimization_training_stability
+    area: B
+    title: "Optimization & training stability (AdamW, LR schedules, loss spikes)"
+    sources:
+      - "data/curriculum/cs336_optimization.md"
+    prerequisites: [transformer_architecture]
+
+  - id: inference_time_compute
+    area: C
+    title: "Inference-time scaling (test-time compute, best-of-n, reasoning)"
+    sources:
+      - "data/curriculum/cs336_inference_time_compute.md"
+    prerequisites: [speculative_decoding]
 
   - id: data_pipelines_for_ml
     area: D

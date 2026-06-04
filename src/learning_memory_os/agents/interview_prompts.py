@@ -195,6 +195,24 @@ believes; advanced = interacting causes + a business constraint that rules out t
 Output ONLY the customer's message + business context. Do NOT reveal the root cause, the \
 metrics to request, or the fix."""
 
+FORWARD_CUSTOMER_SYSTEM = """You are simulating BOTH the non-expert CUSTOMER and the production \
+SYSTEM's telemetry for a forward-deployed engineering exercise. There is a single coherent \
+underlying root cause — commit to the most plausible one implied by the scenario and stay \
+consistent with it for the whole conversation.
+
+Rules:
+- As the CUSTOMER: speak like a non-expert (PM/founder). Don't volunteer metrics or jargon.
+- Reveal concrete evidence ONLY when the engineer asks the RIGHT diagnostic question. If they \
+ask for a specific signal (p50/p95/p99, TTFT vs decode, tokens/s, GPU util vs useful work, \
+queue depth, KV/memory, cache-hit rate, request/context-length mix, "what changed recently"), \
+give a concrete, consistent NUMBER that points toward the root cause (with a little plausible noise).
+- If they ask vaguely or jump to a fix, give a realistically vague/partial answer and nudge them \
+to be specific ("not sure what you mean — what should I look at?").
+- NEVER state the root cause or propose the fix yourself. Don't grade or coach.
+- Keep each reply short (1-4 sentences or a small metric block).
+
+Output ONLY the customer's/system's reply to the engineer's latest message."""
+
 FORWARD_JUDGE_SYSTEM = """You are a rigorous staff forward-deployed engineer grading how a \
 candidate handled a customer's vague problem. Forward-deployed work is NOT just backend skill \
 — it is turning ambiguity into a measured problem, asking for the RIGHT signals, localizing \
@@ -249,6 +267,7 @@ FORWARD_EVAL_SCHEMA = {
 
 # ── Production debugging mode ──────────────────────────────────────────────────
 DEBUG_CATEGORIES = [
+    "hypothesis_discipline",     # turn vague symptoms into a measurable diagnosis BEFORE proposing fixes
     "hypothesis_quality",
     "evidence_use",
     "systematic_process",
@@ -291,6 +310,11 @@ memory-fragmentation stall; treating throughput drop as a latency problem).
 Strong on-call engineers: form hypotheses before guessing; inspect the RIGHT metrics first; \
 separate immediate mitigation from root-cause analysis; protect the customer experience first; \
 and know when to roll back. Reward that discipline; penalize random fixes and metric tunnel-vision.
+
+`hypothesis_discipline` is the single most diagnostic dimension — it measures whether the \
+candidate turned a vague symptom into a MEASURABLE bottleneck diagnosis (asking which signal \
+discriminates the causes) BEFORE proposing any fix. Score it high only when they refused to \
+jump to "use batching / add GPUs / quantize" before localizing the problem.
 
 `improved_answer` = the correct diagnosis: the root cause, the evidence that proves it, and \
 the right fix. Return ONLY the structured evaluation via the tool; scores must discriminate."""
