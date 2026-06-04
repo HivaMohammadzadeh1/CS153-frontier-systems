@@ -122,6 +122,36 @@ The research *is* the product's unit economics.
 
 ---
 
+## Continuous improvement → a personalized, self-adapting tutor
+
+When AI writes the code, the durable human skill is **systems-engineering judgment**.
+Memex's long game is a tutor that **learns *how* you learn**, **remembers what you've
+learned**, and trains that judgment with a model that keeps improving. Every turn is
+captured as fine-tune-ready data (`memory/trace.py`), turning usage into compounding
+model quality. Full design: [`docs/superpowers/specs/2026-06-03-continuous-improvement-personalized-llm-design.md`](docs/superpowers/specs/2026-06-03-continuous-improvement-personalized-llm-design.md).
+
+**The data flywheel** — labeled *learning outcomes* (not answers) are the asset that compounds:
+
+![Data flywheel](docs/diagrams/flywheel.png)
+
+**Three adaptation loops** at different timescales (Loop 1 is live today):
+
+![Three adaptation loops](docs/diagrams/three_loops.png)
+
+**The personalized model** — shared base, a globally-improving adapter, and a thin
+per-user / per-learning-style layer conditioned on the student's own memory:
+
+![Personalized model architecture](docs/diagrams/personalized_architecture.png)
+
+Shipped so far: **(Loop 1)** live per-turn personalization + inferred **learning style**
+(`agents/learning_style.py`) injected into the tutor; **reward-weighted export** +
+**realized-mastery-gain rewards** (`memory/trace.py`); and a **Loop-2 training-set
+builder** (`scripts/build_training_set.py`) that mixes real reward-weighted traces with
+the synthetic set for cluster retraining. Next: RL-from-outcomes and per-user adapters.
+(More diagrams — `rl_from_outcomes`, `memory_lifecycle` — in [`docs/diagrams/`](docs/diagrams/).)
+
+---
+
 ## Setup
 
 Prereqs: Python 3.11+, [`uv`](https://github.com/astral-sh/uv), Docker.
