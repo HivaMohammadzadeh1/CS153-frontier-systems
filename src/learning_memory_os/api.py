@@ -1020,17 +1020,24 @@ def chat_stream(req: ChatRequest, request: Request):
         conn.close()
         raise
 
+    reasoning = s.tutor_reasoning
     def event_stream():
         try:
             chunks: list[str] = []
             raw = llm.stream(
-                system=p["system"] + _REASONING_INSTRUCTION,
+                system=p["system"] + (_REASONING_INSTRUCTION if reasoning else ""),
                 user=p["user_prompt"], max_tokens=2048,
             )
-            for kind, piece in _split_thinking(raw):
-                if kind == "thinking":
-                    yield f"data: {json.dumps({'thinking': piece})}\n\n"
-                else:
+            if reasoning:
+                for kind, piece in _split_thinking(raw):
+                    if kind == "thinking":
+                        yield f"data: {json.dumps({'thinking': piece})}\n\n"
+                    else:
+                        chunks.append(piece)
+                        yield f"data: {json.dumps({'delta': piece})}\n\n"
+            else:
+                # No reasoning pass: stream the answer straight through (fastest path).
+                for piece in raw:
                     chunks.append(piece)
                     yield f"data: {json.dumps({'delta': piece})}\n\n"
             fin = _finalize_turn(conn, req, llm, logger, p, "".join(chunks))
