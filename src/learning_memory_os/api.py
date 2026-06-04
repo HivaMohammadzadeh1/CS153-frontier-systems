@@ -656,6 +656,25 @@ def student_interview_detail(student_id: str, eval_id: str):
     }
 
 
+@app.delete("/api/student/{student_id}/interviews/{eval_id}")
+def student_interview_delete(student_id: str, eval_id: str):
+    """Delete one past session (the student's own record only)."""
+    conn = connect(_settings().database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM interview_evaluations WHERE id = %s AND student_id = %s",
+                (eval_id, student_id),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    return {"deleted": eval_id}
+
+
 @app.get("/api/student/{student_id}/state")
 def student_state(student_id: str):
     conn = connect(_settings().database_url)

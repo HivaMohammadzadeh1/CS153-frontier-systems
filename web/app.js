@@ -1717,6 +1717,7 @@ async function ivLoadHistory() {
           <div class="tl-meta">${when} · ${esc(iv.level || "")}${turns}${weak} · <span style="color:var(--accent)">view report →</span></div>
         </div>
         <span class="verdict-score ${col}" style="font-size:22px;min-width:auto">${sc}</span>
+        <button class="iv-del" data-iv-id="${esc(iv.id)}" title="Delete this session" aria-label="Delete">🗑</button>
       </div>`;
   }).join("");
   const avg = d.avg_score != null
@@ -1724,6 +1725,17 @@ async function ivLoadHistory() {
   host.innerHTML = `<div class="section-label">Past interviews</div>
     <div class="card"><div style="margin-bottom:8px">${avg}</div><div class="timeline">${rows}</div></div>`;
   host.querySelectorAll(".iv-past").forEach((el) => el.addEventListener("click", () => ivViewPast(el.dataset.ivId)));
+  host.querySelectorAll(".iv-del").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); ivDeletePast(el.dataset.ivId); }));
+}
+
+async function ivDeletePast(id) {
+  if (!confirm("Delete this interview from your history? This can't be undone.")) return;
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/interviews/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!r.ok) throw new Error("http " + r.status);
+    if (typeof toast === "function") toast("Session deleted.");
+    ivLoadHistory();   // refresh list + average
+  } catch (_) { if (typeof toast === "function") toast("Could not delete — try again."); }
 }
 
 // Reopen a past session's full report (clicked from the history list).
