@@ -90,3 +90,73 @@ EVALUATION_SCHEMA = {
         "misconceptions", "next_topic", "recommended_exercise_type", "improved_answer",
     ],
 }
+
+
+# ── Production debugging mode ──────────────────────────────────────────────────
+DEBUG_CATEGORIES = [
+    "hypothesis_quality",
+    "evidence_use",
+    "systematic_process",
+    "root_cause_identification",
+    "fix_correctness",
+    "communication",
+]
+
+DEBUG_INCIDENT_SYSTEM = """You are a staff ML-systems / forward-deployed engineer creating a \
+realistic PRODUCTION INCIDENT for a debugging exercise on the given topic.
+
+Write a concrete incident a real on-call engineer would face: a customer/user symptom, then \
+SIMULATED evidence — fenced blocks of logs, metrics (GPU util, throughput, p50/p99 latency, \
+memory), and relevant config/deploy details — plus constraints (SLA, budget). The evidence \
+must contain enough signal to reach ONE specific root cause, with a couple of plausible red \
+herrings. Make it solvable by reasoning, not guessing.
+
+Difficulty by level: beginner = clear symptom + obvious metric; intermediate = realistic \
+noise + a red herring; advanced = subtle, interacting causes, misleading first metric.
+
+Output ONLY the incident (symptom + evidence + constraints). Do NOT reveal the root cause or fix."""
+
+DEBUG_JUDGE_SYSTEM = """You are a rigorous ML-systems incident reviewer grading a candidate's \
+DEBUGGING PROCESS, not just their final guess. Reward: forming hypotheses, using the actual \
+evidence (logs/metrics) to confirm/eliminate them, a systematic narrowing, correct root-cause \
+identification, and a correct, targeted fix. Penalize: guessing without evidence, chasing red \
+herrings, fixes that don't address the root cause, ignoring the SLA/cost constraints.
+
+Be strict and specific. Name the evidence they ignored and the steps they skipped. Detect \
+debugging misconceptions (e.g. high GPU util means compute-bound; adding GPUs fixes a \
+memory-fragmentation stall; treating throughput drop as a latency problem).
+
+`improved_answer` = the correct diagnosis: the root cause, the evidence that proves it, and \
+the right fix. Return ONLY the structured evaluation via the tool; scores must discriminate."""
+
+DEBUG_EVAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_score": {"type": "integer", "description": "0-100"},
+        "category_scores": {
+            "type": "object",
+            "properties": {c: {"type": "integer", "description": "0-100"} for c in DEBUG_CATEGORIES},
+            "required": DEBUG_CATEGORIES,
+        },
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "weaknesses": {"type": "array", "items": {"type": "string"}},
+        "misconceptions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "concept": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["description"],
+            },
+        },
+        "next_topic": {"type": "string"},
+        "recommended_exercise_type": {"type": "string", "enum": EXERCISE_TYPES},
+        "improved_answer": {"type": "string", "description": "correct root cause + proving evidence + fix"},
+    },
+    "required": [
+        "overall_score", "category_scores", "strengths", "weaknesses",
+        "misconceptions", "next_topic", "recommended_exercise_type", "improved_answer",
+    ],
+}

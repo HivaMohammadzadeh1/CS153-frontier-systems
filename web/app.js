@@ -1528,7 +1528,7 @@ async function upgradeIntent(source) {
 }
 
 // ── Mock Interview (AI Judge) ──────────────────────────────────
-let _ivQuestion = null, _ivTopic = null, _ivLevel = "intermediate";
+let _ivQuestion = null, _ivTopic = null, _ivLevel = "intermediate", _ivMode = "interview";
 async function renderInterview() {
   const el = $("view-interview");
   el.innerHTML = `
@@ -1541,6 +1541,10 @@ async function renderInterview() {
       <div class="card">
         <div class="tile-kicker" style="margin-bottom:8px">Set up</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select id="ivMode" class="topic-select">
+            <option value="interview">Design interview</option>
+            <option value="debug">Production debugging</option>
+          </select>
           <select id="ivLevel" class="topic-select">
             <option value="beginner">Beginner</option>
             <option value="intermediate" selected>Intermediate</option>
@@ -1560,16 +1564,19 @@ async function ivGenerate() {
   const body = $("ivBody"), btn = $("ivGen");
   _ivLevel = $("ivLevel").value;
   const topic = $("ivTopic").value || null;
+  _ivMode = $("ivMode") ? $("ivMode").value : "interview";
+  const isDebug = _ivMode === "debug";
   btn.disabled = true;
-  body.innerHTML = `<div class="card"><span class="thinking-dots"><span></span><span></span><span></span></span> Generating a design question…</div>`;
+  body.innerHTML = `<div class="card"><span class="thinking-dots"><span></span><span></span><span></span></span> ${isDebug ? "Spinning up a production incident…" : "Generating a design question…"}</div>`;
   try {
-    const r = await fetch("/api/interview/question", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: topic, level: _ivLevel }) });
-    const d = await r.json(); _ivQuestion = d.question; _ivTopic = d.topic_id;
+    const url = isDebug ? "/api/debug/incident" : "/api/interview/question";
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: topic, level: _ivLevel }) });
+    const d = await r.json(); _ivQuestion = isDebug ? d.incident : d.question; _ivTopic = d.topic_id;
     body.innerHTML = `
       <div class="card">
-        <div class="tile-kicker">Design question · ${esc(d.topic_title)} · ${esc(d.level)}</div>
-        <div class="prose-chat" style="margin:8px 0 14px">${renderMarkdown(d.question)}</div>
-        <textarea id="ivAnswer" class="input-area" rows="10" placeholder="Reason out loud: clarify requirements, identify bottlenecks, do the latency/throughput/memory math, name the tradeoffs…"></textarea>
+        <div class="tile-kicker">${isDebug ? "Incident" : "Design question"} · ${esc(d.topic_title)} · ${esc(d.level)}</div>
+        <div class="prose-chat" style="margin:8px 0 14px">${renderMarkdown(_ivQuestion)}</div>
+        <textarea id="ivAnswer" class="input-area" rows="10" placeholder="${isDebug ? 'Diagnose it: hypotheses, what the logs/metrics tell you, the root cause, and the fix…' : 'Reason out loud: clarify requirements, identify bottlenecks, do the latency/throughput/memory math, name the tradeoffs…'}"></textarea>
         <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="ivSubmit">Submit for evaluation</button></div>
         <div id="ivResult" style="margin-top:14px"></div>
       </div>`;
@@ -1582,7 +1589,12 @@ async function ivSubmit() {
   const res = $("ivResult"), btn = $("ivSubmit"); btn.disabled = true;
   res.innerHTML = `<span class="thinking-dots"><span></span><span></span><span></span></span> The AI judge is grading…`;
   try {
-    const r = await fetch("/api/interview/evaluate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, question: _ivQuestion, answer: ans }) });
+    const isDebug = _ivMode === "debug";
+    const url = isDebug ? "/api/debug/evaluate" : "/api/interview/evaluate";
+    const payload = isDebug
+      ? { student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, incident: _ivQuestion, diagnosis: ans }
+      : { student_id: state.studentId, topic_id: _ivTopic, level: _ivLevel, question: _ivQuestion, answer: ans };
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const ev = await r.json();
     res.innerHTML = ivReport(ev);
     res.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });

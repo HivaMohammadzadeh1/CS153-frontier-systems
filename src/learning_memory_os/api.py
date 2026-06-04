@@ -1117,6 +1117,111 @@ def interview_evaluate(req: InterviewEvalRequest):
     return ev
 
 
+# ── Production Debugging Mode ──────────────────────────────────────────────────
+class DebugIncidentRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+
+
+class DebugEvalRequest(BaseModel):
+    student_id: str
+    topic_id: Optional[str] = None
+    level: str = "intermediate"
+    incident: str
+    diagnosis: str
+
+
+def _weakest_topic(student_id: str) -> Optional[str]:
+    conn = connect(_settings().database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT s.topic_id AS t FROM mastery m JOIN semantic_items s ON s.id = m.concept_id "
+                "WHERE m.student_id = %s GROUP BY s.topic_id ORDER BY avg(m.score) ASC LIMIT 1",
+                (student_id,),
+            )
+            row = cur.fetchone()
+            return row["t"] if row else (_TOPICS[0].id if _TOPICS else None)
+    finally:
+        conn.close()
+
+
+@app.post("/api/debug/incident")
+def debug_incident(req: DebugIncidentRequest):
+    """Generate a realistic ML-systems production incident (with simulated logs/metrics)."""
+    from learning_memory_os.agents.interview import DebuggingAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_id = req.topic_id or _weakest_topic(req.student_id)
+    topic_title = title_by_id.get(topic_id, topic_id or "ML systems")
+    inc = DebuggingAgent(llm).generate_incident(topic_title=topic_title, level=req.level)
+    return {"topic_id": topic_id, "topic_title": topic_title, "level": req.level, "incident": inc}
+
+
+@app.post("/api/debug/evaluate")
+def debug_evaluate(req: DebugEvalRequest):
+    """Grade the student's debugging process; persist + update skill model + reflect."""
+    from learning_memory_os.agents.interview import DebuggingAgent
+    llm, _ = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    topic_title = title_by_id.get(req.topic_id, req.topic_id or "ML systems")
+    conn = connect(_settings().database_url)
+    try:
+        student = StudentStore(conn)
+        student.ensure_student(req.student_id)
+        style = build_profile(conn, req.student_id).learning_style or None
+        ev = DebuggingAgent(llm).evaluate(
+            incident=req.incident, diagnosis=req.diagnosis, topic_title=topic_title,
+            level=req.level, profile_summary=style,
+        )
+        ev["kind"] = "debug"
+        overall = int(ev.get("overall_score") or 0)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO interview_evaluations "
+                "(student_id, topic_id, level, question, answer, overall_score, evaluation) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
+                (req.student_id, req.topic_id, req.level, req.incident, req.diagnosis,
+                 overall, json.dumps(ev)),
+            )
+            concept_ids = []
+            if req.topic_id:
+                cur.execute(
+                    "SELECT id::text FROM semantic_items WHERE topic_id = %s "
+                    "AND artifact_type = 'concept' LIMIT 6",
+                    (req.topic_id,),
+                )
+                concept_ids = [r["id"] for r in cur.fetchall()]
+        for cid in concept_ids:
+            student.update_mastery(req.student_id, cid, overall / 100.0, 0.4)
+        for m in (ev.get("misconceptions") or [])[:5]:
+            desc = (m.get("description") or "").strip()
+            if desc:
+                student.record_misconception(
+                    req.student_id, concept_id=None, description=desc[:300],
+                    evidence=(m.get("concept") or None), topic_id=req.topic_id,
+                )
+        EpisodicStore(conn).append(
+            student_id=req.student_id, event_type="debug_attempt",
+            payload={"topic_id": req.topic_id, "overall_score": overall},
+        )
+        weak = sorted((ev.get("category_scores") or {}).items(), key=lambda kv: kv[1])[:3]
+        reflection = (
+            f"Debugging incident on {topic_title}: scored {overall}/100. "
+            f"Weakest: {', '.join(k for k, _ in weak)}. Next: {ev.get('next_topic', '')}."
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tutor_reflections (student_id, summary, payload) VALUES (%s, %s, %s::jsonb)",
+                (req.student_id, reflection, json.dumps({"kind": "debug", "topic_id": req.topic_id, "overall": overall})),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ev
+
+
 class DiagnosticStartRequest(BaseModel):
     original_question: str
     rubric: str
