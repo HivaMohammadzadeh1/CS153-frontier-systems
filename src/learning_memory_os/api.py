@@ -92,36 +92,48 @@ _PUBLIC_API = ("/api/health", "/api/topics", "/api/info", "/api/routers", "/api/
 _STUDENT_PATH_RE = re.compile(r"^/api/student/([^/]+)")
 
 
-def _username_from_request(request: Request) -> Optional[str]:
+def _session_user(request: Request) -> Optional[dict]:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         return None
     conn = connect(_settings().database_url)
     try:
-        return AuthStore(conn).username_for_session(token)
+        return AuthStore(conn).session_user(token)
     finally:
         conn.close()
+
+
+def _username_from_request(request: Request) -> Optional[str]:
+    su = _session_user(request)
+    return su["username"] if su else None
 
 
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Require a valid session for all /api/ data routes (except the public list),
-    and enforce that /api/student/{id}/... matches the logged-in user."""
+    enforce that /api/student/{id}/... matches the caller, and — when billing is
+    enabled — require a paid (is_pro) account for everything except the billing routes."""
+    from learning_memory_os import billing
     path = request.url.path
     if path.startswith("/api/") and not path.startswith(_PUBLIC_API):
-        username = _username_from_request(request)
-        if not username:
+        su = _session_user(request)
+        if not su:
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
-        request.state.username = username
+        request.state.username = su["username"]
+        request.state.is_pro = bool(su.get("is_pro"))
         m = _STUDENT_PATH_RE.match(path)
-        if m and unquote(m.group(1)) != username:
+        if m and unquote(m.group(1)) != su["username"]:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
+        # Hard paywall: must have paid to use the platform (billing routes exempt).
+        if billing.is_enabled() and not su.get("is_pro") and not path.startswith("/api/billing/"):
+            return JSONResponse({"detail": "Payment required"}, status_code=402)
     return await call_next(request)
 
 
-def _llm_and_embedder():
+def _llm_and_embedder(model: Optional[str] = None):
     s = _settings()
-    return LLM(api_key=s.anthropic_api_key), Embedder(api_key=s.openai_api_key)
+    llm = LLM(api_key=s.anthropic_api_key, model=model) if model else LLM(api_key=s.anthropic_api_key)
+    return llm, Embedder(api_key=s.openai_api_key)
 
 
 _TOPICS = load_topics(_PROJECT_ROOT / "config" / "topics.yaml")
@@ -199,11 +211,14 @@ def auth_logout(request: Request, response: Response):
 
 @app.get("/api/auth/me")
 def auth_me(request: Request):
-    username = _username_from_request(request)
-    if not username:
+    from learning_memory_os import billing
+    su = _session_user(request)
+    if not su:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    # Pro is disabled for now — everyone gets full access.
-    return {"username": username, "is_pro": True}
+    billing_enabled = billing.is_enabled()
+    # When billing is off (dev/local), everyone has access.
+    is_pro = bool(su.get("is_pro")) or not billing_enabled
+    return {"username": su["username"], "is_pro": is_pro, "billing_enabled": billing_enabled}
 
 
 # ---- Request/response models ----
@@ -567,6 +582,50 @@ def student_readiness(student_id: str):
         conn.close()
 
 
+@app.get("/api/student/{student_id}/interviews")
+def student_interviews(student_id: str):
+    """History of mock interviews / debugging / forward-deployed sessions, most
+    recent first — so students can see what they've done and how they're trending."""
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    conn = connect(_settings().database_url)
+    try:
+        rows = []
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id::text, topic_id, level, overall_score, evaluation, "
+                    "       to_char(occurred_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS ts "
+                    "FROM interview_evaluations WHERE student_id = %s "
+                    "ORDER BY occurred_at DESC LIMIT 50",
+                    (student_id,),
+                )
+                rows = cur.fetchall()
+        except Exception:
+            rows = []  # table not present yet
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        ev = r["evaluation"] if isinstance(r["evaluation"], dict) else {}
+        cats = ev.get("category_scores", {}) if isinstance(ev, dict) else {}
+        weakest = min(cats.items(), key=lambda kv: kv[1])[0] if cats else None
+        out.append({
+            "id": r["id"],
+            "topic_id": r["topic_id"],
+            "topic_title": title_by_id.get(r["topic_id"], r["topic_id"] or "ML systems"),
+            "level": r["level"],
+            "kind": ev.get("kind", "interview"),
+            "turns": ev.get("turns"),
+            "overall_score": r["overall_score"],
+            "weakest": weakest,
+            "next_topic": ev.get("next_topic"),
+            "occurred_at": r["ts"],
+        })
+    avg = round(sum(o["overall_score"] or 0 for o in out) / len(out), 1) if out else None
+    return {"interviews": out, "count": len(out), "avg_score": avg}
+
+
 @app.get("/api/student/{student_id}/state")
 def student_state(student_id: str):
     conn = connect(_settings().database_url)
@@ -645,10 +704,12 @@ def _prepare_turn(conn, req: ChatRequest, llm, embedder, engine, logger) -> dict
         conversation_id = convs.create(req.student_id, title="New chat")
         conv_was_created = True
 
+    # Embed the question ONCE and reuse it for both retrieval and routing (was being
+    # embedded twice per turn — an extra OpenAI round-trip on every message).
+    q_emb = embedder.embed_one(req.question)
     if req.topic_id:
         candidates = semantic.by_topic(req.topic_id)
     else:
-        q_emb = embedder.embed_one(req.question)
         candidates = semantic.vector_search(query=q_emb, k=20)
 
     active_misc = student.active_misconceptions(req.student_id)
@@ -689,9 +750,8 @@ def _prepare_turn(conn, req: ChatRequest, llm, embedder, engine, logger) -> dict
         else:
             logger.log({"event": "finetuned_router_unavailable", "router": req.router})
 
-    task_emb = embedder.embed_one(req.question)
     decision = engine.route(
-        candidates=candidates, task_embedding=task_emb,
+        candidates=candidates, task_embedding=q_emb,
         misconception_concept_ids=misc_concept_ids, misconception_topics=misc_topics,
         prerequisites=prereq_titles, recent_ids=recent_ids,
         reuse_counts=dict(req.reuse_counts), due_concept_ids=due_concept_ids, budget=req.budget,
@@ -827,7 +887,7 @@ def _finalize_turn(conn, req: ChatRequest, llm, logger, p: dict, reply_text: str
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest, request: Request):
     req.student_id = request.state.username   # never trust a client-supplied identity
-    llm, embedder = _llm_and_embedder()
+    llm, embedder = _llm_and_embedder(_settings().tutor_model)
     engine = RoutingEngine()
     s = _settings()
     logger = InteractionLogger(path=s.log_dir / "interactions.jsonl")
@@ -899,7 +959,7 @@ def chat_stream(req: ChatRequest, request: Request):
     """Same as /api/chat but streams the reply token-by-token via SSE, then sends
     a final `{"done": true, ...}` event with references/selection/conversation_id."""
     req.student_id = request.state.username
-    llm, embedder = _llm_and_embedder()
+    llm, embedder = _llm_and_embedder(_settings().tutor_model)
     engine = RoutingEngine()
     s = _settings()
     logger = InteractionLogger(path=s.log_dir / "interactions.jsonl")

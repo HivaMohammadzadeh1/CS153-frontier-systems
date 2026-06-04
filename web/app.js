@@ -234,6 +234,11 @@ function renderMarkdown(text) {
   src = src.replace(/\\begin\{([a-z*]+)\}[\s\S]+?\\end\{\1\}/gi, (m) => push(m, true)); // bare env
   src = src.replace(/\$([^$\n]+?)\$/g, (_, t) => push(t, false));        // $ … $ (inline)
 
+  // Some structured-output fields come back with LITERAL escape sequences (the model
+  // wrote "\n" as backslash-n instead of a real newline). Convert them now — AFTER
+  // math is pulled out, so LaTeX commands like \nabla / \neq aren't mangled.
+  src = src.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\t/g, "  ");
+
   let html = DOMPurify.sanitize(marked.parse(src));
 
   mermaidBlocks.forEach((code, i) => {
@@ -1437,13 +1442,33 @@ async function submitAuth(e) {
     onLoggedIn((await res.json()).username);
   } catch (e2) { err.textContent = e2.message; err.classList.remove("hidden"); }
 }
-function onLoggedIn(username) {
+async function onLoggedIn(username) {
   state.studentId = username;
-  setTimeout(checkOnboarding, 300);
   const tag = $("authUserTag"); if (tag) tag.textContent = username;
   $("authGate").classList.add("hidden");
   renderStreak();
+  // Hard paywall: when billing is enabled, a user must have paid (is_pro) to use
+  // the platform. Re-fetch /me so it's authoritative right after signup/login.
+  let me = {};
+  try { const r = await fetch("/api/auth/me"); if (r.ok) me = await r.json(); } catch (_) {}
+  if (me.billing_enabled && !me.is_pro) { showPayGate(); return; }
+  $("payGate")?.classList.add("hidden");
+  setTimeout(checkOnboarding, 300);
   bootApp();
+}
+function showPayGate() { $("payGate")?.classList.remove("hidden"); }
+async function startCheckout() {
+  const err = $("payError"); err?.classList.add("hidden");
+  let url = null;
+  try {
+    const r = await fetch("/api/billing/checkout", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "paywall" }),
+    });
+    if (r.ok) url = (await r.json()).checkout_url;
+  } catch (_) {}
+  if (url) { window.location.href = url; }   // same tab → returns to ?upgraded=1
+  else if (err) { err.textContent = "Checkout isn't available right now — try again shortly."; err.classList.remove("hidden"); }
 }
 async function logout() {
   try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) {}
@@ -1647,6 +1672,7 @@ async function renderInterview() {
         </div>
       </div>
       <div id="ivBody"></div>
+      <div id="ivHistory"></div>
     </div>`;
   const ts = $("ivTopic");
   Object.entries(TOPIC_MAP).forEach(([id, m]) => { const o = document.createElement("option"); o.value = id; o.textContent = m.title; ts.appendChild(o); });
@@ -1656,6 +1682,47 @@ async function renderInterview() {
     $("ivGen").textContent = $("ivMode").value === "interview" ? "Start →" : "Generate →";
   });
   $("ivGen").addEventListener("click", ivGenerate);
+  ivLoadHistory();
+}
+
+const IV_KIND_META = {
+  interview: { icon: "🎤", label: "Design" },
+  debug: { icon: "🛠️", label: "Debugging" },
+  forward: { icon: "📣", label: "Forward-deployed" },
+};
+async function ivLoadHistory() {
+  const host = $("ivHistory");
+  if (!host) return;
+  let d;
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/interviews`);
+    if (!r.ok) return;
+    d = await r.json();
+  } catch (_) { return; }
+  if (!d.interviews || !d.interviews.length) {
+    host.innerHTML = `<div class="section-label">Past interviews</div><div class="card"><p class="view-subtitle" style="margin:0">No interviews yet — run one above and it'll show up here.</p></div>`;
+    return;
+  }
+  const rows = d.interviews.map((iv) => {
+    const k = IV_KIND_META[iv.kind] || IV_KIND_META.interview;
+    const sc = iv.overall_score == null ? "—" : iv.overall_score;
+    const col = (iv.overall_score || 0) >= 80 ? "good" : (iv.overall_score || 0) >= 60 ? "warn" : "bad";
+    const when = (iv.occurred_at || "").slice(0, 10);
+    const turns = iv.turns ? ` · ${iv.turns} turns` : "";
+    const weak = iv.weakest ? ` · weakest: ${esc(iv.weakest.replace(/_/g, " "))}` : "";
+    return `<div class="tl-item">
+        <div class="tl-ico">${k.icon}</div>
+        <div class="tl-body">
+          <div class="tl-label">${esc(k.label)} · ${esc(iv.topic_title)}</div>
+          <div class="tl-meta">${when} · ${esc(iv.level || "")}${turns}${weak}</div>
+        </div>
+        <span class="verdict-score ${col}" style="font-size:22px;min-width:auto">${sc}</span>
+      </div>`;
+  }).join("");
+  const avg = d.avg_score != null
+    ? `<span class="tile-sub">${d.count} session${d.count === 1 ? "" : "s"} · avg <b>${d.avg_score}</b>/100</span>` : "";
+  host.innerHTML = `<div class="section-label">Past interviews</div>
+    <div class="card"><div style="margin-bottom:8px">${avg}</div><div class="timeline">${rows}</div></div>`;
 }
 
 async function ivGenerate() {
@@ -1750,6 +1817,7 @@ function ivShowReport(ev, res) {
   res.innerHTML = ivReport(ev);
   res.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
   res.querySelector(".iv-next")?.addEventListener("click", () => { if (_ivTopic) seedChat(_ivTopic); });
+  ivLoadHistory();   // the session we just finished now shows in the history list
 }
 function ivReport(ev) {
   const pct = ev.overall_score || 0;
@@ -1818,6 +1886,8 @@ async function saveOnboarding() {
   document.querySelectorAll(".auth-tab").forEach((t) => t.addEventListener("click", () => setAuthMode(t.dataset.tab)));
   $("authForm").addEventListener("submit", submitAuth);
   $("logoutBtn")?.addEventListener("click", logout);
+  $("payBtn")?.addEventListener("click", startCheckout);
+  $("payLogout")?.addEventListener("click", logout);
   setAuthMode("login");
 
   // Gate the app behind a session.
