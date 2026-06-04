@@ -120,6 +120,21 @@ class AuthStore:
         with self.conn.cursor() as cur:
             cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
 
+    def session_user(self, token: str | None) -> dict | None:
+        """Resolve a session token to {username, is_pro} in one query (or None)."""
+        if not token:
+            return None
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT s.username, u.is_pro
+                FROM sessions s JOIN users u ON u.id = s.user_id
+                WHERE s.token = %s AND s.expires_at > now()
+                """,
+                (token,),
+            )
+            return cur.fetchone()
+
     # ---- Entitlement (Pro) ----
     def is_pro(self, username: str) -> bool:
         with self.conn.cursor() as cur:

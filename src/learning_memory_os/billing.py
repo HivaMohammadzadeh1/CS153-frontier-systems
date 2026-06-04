@@ -17,6 +17,14 @@ def _public_url() -> str:
     return os.environ.get("LMOS_PUBLIC_URL", "http://localhost:8000").rstrip("/")
 
 
+def is_enabled() -> bool:
+    """True when payments are configured (Stripe keys or a Payment Link)."""
+    return bool(
+        (os.environ.get("STRIPE_SECRET_KEY") and os.environ.get("STRIPE_PRICE_ID"))
+        or os.environ.get("LMOS_CHECKOUT_URL")
+    )
+
+
 def checkout_url(username: str) -> str | None:
     """Return a URL to send the user to pay, or None if billing isn't configured."""
     secret = os.environ.get("STRIPE_SECRET_KEY")
@@ -26,11 +34,11 @@ def checkout_url(username: str) -> str | None:
             import stripe
             stripe.api_key = secret
             session = stripe.checkout.Session.create(
-                mode="subscription",
+                mode="payment",   # one-time $5 (lifetime access)
                 line_items=[{"price": price, "quantity": 1}],
                 client_reference_id=username,
-                success_url=f"{_public_url()}/?upgraded=1#/readiness",
-                cancel_url=f"{_public_url()}/#/readiness",
+                success_url=f"{_public_url()}/?upgraded=1",
+                cancel_url=f"{_public_url()}/?upgraded=0",
                 allow_promotion_codes=True,
             )
             return session.url

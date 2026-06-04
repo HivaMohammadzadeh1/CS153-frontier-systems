@@ -176,6 +176,18 @@
     </div>
   </div>
 
+  <!-- ── Paywall (one-time $5 access) ─────────────────────────────── -->
+  <div id="payGate" class="auth-gate hidden">
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-word">Memex</span></div>
+      <h1 class="auth-title">Unlock Memex</h1>
+      <p class="auth-sub">A one-time <b>$5</b> unlocks lifetime access — your adaptive ML-systems tutor, mock interviews, readiness report, and progress saved to your account.</p>
+      <div id="payError" class="auth-error hidden"></div>
+      <button id="payBtn" class="btn btn-primary" style="width:100%">Unlock for $5 →</button>
+      <p class="auth-fineprint">Secure one-time checkout via Stripe · <button id="payLogout" class="link-btn" type="button">Log out</button></p>
+    </div>
+  </div>
+
 
   <!-- Onboarding intake -->
   <div id="onboardModal" class="modal hidden">

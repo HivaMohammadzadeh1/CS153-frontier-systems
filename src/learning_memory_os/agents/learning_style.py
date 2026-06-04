@@ -48,9 +48,11 @@ def _classify(
     # Depth vs. breadth: questions per distinct topic.
     qpt = n_questions / max(1, n_topics)
     if qpt >= 3:
-        depth_label = "depth-first"; parts.append("learns depth-first (digs deep into one topic)")
+        depth_label = "depth-first"
+        parts.append("learns depth-first (digs deep into one topic)")
     elif qpt <= 1.4:
-        depth_label = "breadth-first"; parts.append("explores breadth-first across topics")
+        depth_label = "breadth-first"
+        parts.append("explores breadth-first across topics")
     else:
         depth_label = "balanced"
     dims["depth"] = {"value": round(qpt, 2), "label": depth_label}
@@ -58,9 +60,11 @@ def _classify(
     # Self-testing: quizzes per question -> active recall vs. passive.
     qz = n_quizzes / max(1, n_questions)
     if qz >= 0.3:
-        st_label = "active recall"; parts.append("self-tests often — lean on retrieval practice")
+        st_label = "active recall"
+        parts.append("self-tests often — lean on retrieval practice")
     elif qz < 0.1:
-        st_label = "passive"; parts.append("rarely self-tests — proactively offer quick checks")
+        st_label = "passive"
+        parts.append("rarely self-tests — proactively offer quick checks")
     else:
         st_label = "moderate"
     dims["self_testing"] = {"value": round(qz, 2), "label": st_label}
