@@ -1526,20 +1526,25 @@ async function renderReadiness() {
           <button class="btn btn-primary" style="margin-left:auto" data-go="interview">Start a mock interview →</button>
         </div></div>`;
   } else if (v.tier) {
-    const crit = (v.critical_failures || []).map((c) =>
-      `<span class="pill bad">${esc(stripCode(c.category.replace(/_/g, " ")))} ${c.score}</span>`).join(" ");
+    const roundStatusCls = { ready: "good", borderline: "warn", not_ready: "bad" };
+    const rounds = (v.rounds || []).map((r) =>
+      `<div class="bar-row"><span class="lbl">${esc(r.round)}</span><span class="pill ${roundStatusCls[r.status] || "warn"}">${esc(r.status.replace("_", " "))} ${r.score}</span></div>`).join("");
+    const blockers = (v.blockers || []).map((b) =>
+      `<span class="pill bad">${esc(stripCode(b.category.replace(/_/g, " ")))} ${b.score}</span>`).join(" ");
     verdictBlock = `<div class="card verdict-card">
         <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
           <div style="font-size:40px;line-height:1">${tierEmoji}</div>
           <div style="flex:1;min-width:220px">
             <div class="tile-kicker">Hire-bar verdict</div>
             <div style="font-family:var(--font-display);font-weight:700;font-size:22px;margin:2px 0">${esc(v.label || "")}</div>
-            <div class="tile-sub">Blended score <b>${v.score != null ? v.score : "—"}</b> · ${v.interview_count} interview${v.interview_count === 1 ? "" : "s"} · avg ${v.interview_avg != null ? v.interview_avg : "—"} · consistency ${v.consistency != null ? v.consistency : "—"}</div>
-            ${crit ? `<div style="margin-top:10px"><span class="tile-sub">Critical gaps blocking a pass:</span><br>${crit}</div>` : ""}
+            <div class="tile-sub">Blended <b>${v.score != null ? v.score : "—"}</b> · ${v.interview_count} interview${v.interview_count === 1 ? "" : "s"} · avg ${v.interview_avg != null ? v.interview_avg : "—"} · difficulty-adj ${v.difficulty_adjusted != null ? v.difficulty_adjusted : "—"} · consistency ${v.consistency != null ? v.consistency : "—"}</div>
+            ${v.distance_label ? `<div style="margin-top:8px;font-weight:600;color:var(--ember)">🎯 ${esc(v.distance_label)}</div>` : ""}
+            ${blockers ? `<div style="margin-top:8px"><span class="tile-sub">Skills below the ready bar:</span><br>${blockers}</div>` : ""}
           </div>
           <div class="verdict-score ${tierClass}">${v.score != null ? Math.round(v.score) : "—"}</div>
         </div>
-        <div class="tile-sub" style="margin-top:10px;opacity:.8">Verdict uses a real hire bar: 60% interview average + 20% trajectory + 20% consistency, gated by your four load-bearing skills. Ready = avg ≥ 80 over ≥ 3 interviews with no critical gap.</div>
+        ${rounds ? `<div style="margin-top:14px"><div class="tile-kicker" style="margin-bottom:6px">By interview round</div>${rounds}</div>` : ""}
+        <div class="tile-sub" style="margin-top:12px;opacity:.8">Hire bar: 60% difficulty-adjusted performance + 20% trajectory + 20% consistency, gated by your four load-bearing skills and a required hard deep-dive. Ready = avg ≥ 80 over ≥ 3 interviews, no critical gap.</div>
       </div>`;
   }
   const allGaps = d.gaps || [];
@@ -1619,12 +1624,13 @@ async function upgradeIntent(source) {
 // ── Mock Interview (AI Judge) ──────────────────────────────────
 let _ivQuestion = null, _ivTopic = null, _ivTopicTitle = "", _ivLevel = "intermediate", _ivMode = "interview";
 let _ivTranscript = [];   // multi-turn design interview: [{q,a}, ...]
-const IV_MAX_TURNS = 3;   // Q1 + up to 2 follow-up probes
+const IV_MAX_TURNS = 5;   // design → deep-dive → calculation → debugging → tradeoff
+                          // (early "Finish & get verdict" lets users stop sooner)
 
 const IV_MODES = {
   interview: {
     title: "ML-systems design interview", eyebrow: "Mock Interview",
-    sub: "A staff-engineer AI judge runs a real back-and-forth — it asks follow-up probes on your weak spots, then scores the whole conversation across 10 rubric categories.",
+    sub: "A staff-engineer AI judge runs a real multi-turn interview — design, then a deep-dive, a quantitative check, a debugging twist, and a tradeoff question — then scores the whole conversation across 10 rubric categories. Finish early anytime.",
     gen: "/api/interview/question", qkey: "question", evalUrl: "/api/interview/evaluate",
     qlabel: "Design question", spinning: "Generating a design question…",
     placeholder: "Reason out loud: clarify requirements, identify bottlenecks, do the latency/throughput/memory math, name the tradeoffs…",

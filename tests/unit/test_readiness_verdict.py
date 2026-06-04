@@ -34,9 +34,10 @@ class _FakeConn:
         return _FakeCursor(self._rows)
 
 
-def _row(overall, **cats):
+def _row(overall, level="advanced", kind="interview", **cats):
     scores = {c: cats.get(c, overall) for c in CATEGORIES}
-    return {"overall_score": overall, "evaluation": {"category_scores": scores}}
+    return {"overall_score": overall, "level": level,
+            "evaluation": {"category_scores": scores, "kind": kind}}
 
 
 def test_weights_sum_to_one():
@@ -74,13 +75,27 @@ def test_three_strong_interviews_are_ready():
 
 
 def test_critical_failure_blocks_ready():
-    # High average but a load-bearing skill is failing in the latest interview.
-    latest = _row(88, **{CRITICAL_CATEGORIES[0]: 40})
-    rows = [latest, _row(88), _row(88)]
+    # High average but a load-bearing skill is consistently failing → blocked.
+    rows = [_row(88, **{CRITICAL_CATEGORIES[0]: 40}) for _ in range(3)]
     v = _readiness_verdict(_FakeConn(rows), "s1")
     assert v["interview_ready"] is False
     assert v["tier"] == "not_ready"
     assert any(cf["category"] == CRITICAL_CATEGORIES[0] for cf in v["critical_failures"])
+
+
+def test_hard_deepdive_gate_blocks_easy_only():
+    # Three strong interviews but all BEGINNER level → no hard deep-dive cleared,
+    # so even a high average can't read "ready".
+    rows = [_row(88, level="beginner") for _ in range(3)]
+    v = _readiness_verdict(_FakeConn(rows), "s1")
+    assert v["hard_deepdive_pass"] is False
+    assert v["interview_ready"] is False
+
+
+def test_rounds_and_blockers_present():
+    rows = [_row(82) for _ in range(3)]
+    v = _readiness_verdict(_FakeConn(rows), "s1")
+    assert v["rounds"] and all("status" in r for r in v["rounds"])
 
 
 def test_two_interviews_not_yet_confirmed():

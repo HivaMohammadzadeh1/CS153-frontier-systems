@@ -63,14 +63,27 @@ class InterviewAgent:
         )
         return self.llm.complete(system=INTERVIEWER_SYSTEM, user=user, max_tokens=400).strip()
 
-    def followup(self, *, topic_title: str, level: str, transcript: list[dict]) -> str:
-        """Generate the next interviewer probe, targeting the weakest part of the
-        candidate's latest answer. `transcript` is a list of {"q","a"} turns."""
+    # A real interview tests RANGE, not just depth — so each follow-up targets a new
+    # axis rather than always drilling the weakest answer (expert feedback).
+    FOLLOWUP_AXES = {
+        2: "Drill into the WEAKEST or vaguest technical claim in their last answer — make them defend or correct it.",
+        3: "Force a QUANTITATIVE calculation: make them estimate something concrete (KV-cache bytes/token, memory footprint, tokens/s, p99 budget) given the scenario.",
+        4: "Inject a PRODUCTION DEBUGGING twist: a symptom appears in this system (e.g. p99 regression, OOM under burst, throughput drop) — ask them to diagnose it.",
+        5: "Ask a TRADEOFF / STAKEHOLDER question: have them justify a cost/latency/quality tradeoff and explain it to a non-expert.",
+    }
+
+    def followup(self, *, topic_title: str, level: str, transcript: list[dict], turn: int | None = None) -> str:
+        """Generate the next interviewer probe. `turn` is the upcoming turn number;
+        turns 2-5 each target a distinct axis so the interview covers range, not just
+        depth. `transcript` is a list of {"q","a"} turns."""
         convo = _format_transcript(transcript)
+        t = turn or (len(transcript) + 1)
+        axis = self.FOLLOWUP_AXES.get(t) or self.FOLLOWUP_AXES[2]
         user = (
             f"TOPIC: {topic_title}\nLEVEL: {level}\n\n"
             f"INTERVIEW SO FAR:\n{convo}\n\n"
-            "Write your next follow-up question now."
+            f"This is follow-up turn {t}. FOCUS: {axis}\n\n"
+            "Write your next follow-up question now (one question, on that focus)."
         )
         return self.llm.complete(system=INTERVIEW_FOLLOWUP_SYSTEM, user=user, max_tokens=300).strip()
 
@@ -98,9 +111,13 @@ class InterviewAgent:
             max_tokens=4096,
         )
         ev = _normalize(_require_eval(ev), CATEGORIES)
-        # Override the LLM's holistic number with the staff-interviewer weighted sum
-        # (fixes over-weighting communication).
-        ev["overall_score"] = weighted_overall(ev["category_scores"], role)
+        # A FULL multi-turn interview is expected to cover breadth, so we grade it on
+        # the strict staff-interviewer weighted sum (communication can't carry it). A
+        # SINGLE answer is judged on what it reasonably covered — trust the judge's
+        # band-calibrated holistic score so a strong-but-partial answer isn't tanked
+        # by dimensions the question never asked about.
+        if transcript and len(transcript) > 1:
+            ev["overall_score"] = weighted_overall(ev["category_scores"], role)
         return ev
 
 

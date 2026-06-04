@@ -393,6 +393,18 @@ _READINESS_TIERS = [
     (0, "remediation", "Remediation — build the fundamentals first"),
 ]
 _CRITICAL_FAIL_THRESHOLD = 60  # a critical category below this blocks "ready"
+_READY_BAR = 75                # per-skill / per-round "ready" threshold
+# Difficulty weighting — clearing hard questions counts for more than medium ones.
+_LEVEL_WEIGHT = {"beginner": 0.85, "intermediate": 1.0, "advanced": 1.1}
+# Rubric categories grouped into the "rounds" a candidate hears about after an onsite.
+_VERDICT_ROUNDS = [
+    ("ML systems design", ["requirements", "ml_systems_correctness", "reliability"]),
+    ("Inference deep-dive", ["bottleneck_identification", "latency_throughput_reasoning"]),
+    ("Quantitative reasoning", ["memory_compute_reasoning"]),
+    ("Production debugging", ["production_debugging"]),
+    ("Cost & tradeoffs", ["cost_awareness", "forward_deployed_judgment"]),
+    ("Communication", ["communication"]),
+]
 
 
 def _tier_for(score: float) -> tuple[str, str]:
@@ -408,13 +420,14 @@ def _readiness_verdict(conn, student_id: str) -> dict:
     isn't enough interview signal yet (expert: ready = avg>=80 over >=3 interviews
     AND no critical failure)."""
     import statistics
+    from collections import defaultdict
     from learning_memory_os.agents.interview_prompts import CRITICAL_CATEGORIES
 
     rows = []
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT overall_score, evaluation FROM interview_evaluations "
+                "SELECT overall_score, level, evaluation FROM interview_evaluations "
                 "WHERE student_id = %s ORDER BY occurred_at DESC LIMIT 5",
                 (student_id,),
             )
@@ -428,11 +441,21 @@ def _readiness_verdict(conn, student_id: str) -> dict:
             "tier": "no_data", "label": "Take a mock interview to get your readiness verdict",
             "score": None, "interview_count": 0, "interview_avg": None,
             "critical_failures": [], "interview_ready": False, "consistency": None,
-            "trajectory": None,
+            "trajectory": None, "rounds": [], "blockers": [], "distance_label": None,
+            "hard_deepdive_pass": False,
         }
 
     scores = [float(r["overall_score"] or 0) for r in rows]  # most-recent first
     avg = sum(scores) / n
+
+    # Difficulty-adjusted average — clearing HARD questions counts for more than
+    # cruising medium ones (expert feedback).
+    wsum = wtot = 0.0
+    for r in rows:
+        w = _LEVEL_WEIGHT.get((r.get("level") or "intermediate"), 1.0)
+        wsum += float(r["overall_score"] or 0) * w
+        wtot += w
+    diff_adj = min(100.0, wsum / wtot) if wtot else avg
 
     # trajectory: recent vs older half (chronological); reward improvement
     chrono = list(reversed(scores))
@@ -447,29 +470,80 @@ def _readiness_verdict(conn, student_id: str) -> dict:
     # consistency: tight clustering = trustworthy; high variance = risky
     consistency = max(0.0, 100.0 - statistics.pstdev(scores)) if n >= 2 else avg
 
-    blended = 0.6 * avg + 0.2 * trajectory + 0.2 * consistency
+    # Expert formula: 60% difficulty-adjusted performance + 20% trajectory + 20% consistency.
+    blended = 0.6 * diff_adj + 0.2 * trajectory + 0.2 * consistency
 
-    # critical-failure gate from the MOST RECENT interview's category scores
-    crit_fail = []
-    latest = rows[0]["evaluation"] or {}
-    cats = latest.get("category_scores", {}) if isinstance(latest, dict) else {}
+    # Per-category averages across recent interviews (more stable than a single one).
+    cat_lists: dict[str, list] = defaultdict(list)
+    for r in rows:
+        cs = (r["evaluation"] or {}).get("category_scores", {}) if isinstance(r["evaluation"], dict) else {}
+        for k, v in cs.items():
+            try:
+                cat_lists[k].append(float(v))
+            except (TypeError, ValueError):
+                pass
+    cat_avg = {k: sum(v) / len(v) for k, v in cat_lists.items() if v}
+
+    # Per-ROUND verdict (what a candidate is told after a real onsite).
+    rounds = []
+    for name, cats in _VERDICT_ROUNDS:
+        vals = [cat_avg[c] for c in cats if c in cat_avg]
+        if not vals:
+            continue
+        s = sum(vals) / len(vals)
+        status = "ready" if s >= _READY_BAR else "borderline" if s >= 60 else "not_ready"
+        rounds.append({"round": name, "score": round(s), "status": status})
+
+    # Critical-failure gate + blockers: the critical skills holding readiness back.
+    crit_fail, blockers = [], []
     for c in CRITICAL_CATEGORIES:
-        if c in cats and float(cats[c] or 0) < _CRITICAL_FAIL_THRESHOLD:
-            crit_fail.append({"category": c, "score": int(cats[c] or 0)})
+        s = cat_avg.get(c)
+        if s is None:
+            continue
+        if s < _CRITICAL_FAIL_THRESHOLD:
+            crit_fail.append({"category": c, "score": int(s)})
+        if s < _READY_BAR:
+            blockers.append({"category": c, "score": int(s)})
+    blockers.sort(key=lambda b: b["score"])
 
-    interview_ready = (n >= 3) and (avg >= 80) and not crit_fail
+    # Hard deep-dive gate: must have cleared at least one HARD quantitative/debugging
+    # session — sounding good in high-level design isn't enough (expert feedback).
+    hard_pass = False
+    for r in rows:
+        ev = r["evaluation"] or {}
+        kind = ev.get("kind", "interview") if isinstance(ev, dict) else "interview"
+        cs = ev.get("category_scores", {}) if isinstance(ev, dict) else {}
+        hard_ctx = (r.get("level") == "advanced") or kind in ("debug", "forward")
+        cleared = any(float(cs.get(c, 0) or 0) >= _READY_BAR for c in CRITICAL_CATEGORIES) or \
+            (kind in ("debug", "forward") and float(r["overall_score"] or 0) >= _READY_BAR)
+        if hard_ctx and cleared:
+            hard_pass = True
+            break
+
+    interview_ready = (n >= 3) and (avg >= 80) and not crit_fail and hard_pass
 
     tier, label = _tier_for(blended)
     if crit_fail and tier in ("frontier", "ready"):
         tier, label = "not_ready", "Not ready — a load-bearing skill is failing"
+    if not hard_pass and tier in ("frontier", "ready"):
+        tier, label = "borderline", "Borderline — pass a hard debugging or quantitative deep-dive to confirm"
     if n < 3 and tier in ("frontier", "ready"):
         label = f"{label} (need {3 - n} more interview{'s' if 3 - n != 1 else ''} to confirm)"
+
+    # "distance to next tier" — convert the judgment into a plan.
+    distance_label = None
+    if blockers and tier not in ("frontier",):
+        names = [b["category"].replace("_", " ") for b in blockers[:2]]
+        distance_label = f"{len(blockers)} critical skill{'s' if len(blockers) != 1 else ''} from ready — focus on {', '.join(names)}"
 
     return {
         "tier": tier, "label": label, "score": round(blended, 1),
         "interview_count": n, "interview_avg": round(avg, 1),
+        "difficulty_adjusted": round(diff_adj, 1),
         "consistency": round(consistency, 1), "trajectory": round(trajectory, 1),
         "critical_failures": crit_fail, "interview_ready": interview_ready,
+        "rounds": rounds, "blockers": blockers, "distance_label": distance_label,
+        "hard_deepdive_pass": hard_pass,
     }
 
 
@@ -1335,6 +1409,21 @@ def interview_followup(req: InterviewFollowupRequest):
     return {"topic_id": req.topic_id, "topic_title": topic_title, "question": q}
 
 
+# Categories that are NOT concept-specific evidence — a well-communicated but
+# technically-shaky answer shouldn't inflate a concept's mastery (expert feedback).
+_NON_CONCEPT_CATS = {"communication", "requirements", "forward_deployed_judgment", "customer_communication"}
+
+
+def _concept_evidence_score(category_scores: dict, overall: int) -> float:
+    """Concept-specific mastery evidence (0-1): the mean of the TECHNICAL rubric
+    categories only. Used to update per-concept mastery instead of the holistic
+    interview score, so the skill model reflects what the student actually knows."""
+    tech = [float(v) for k, v in (category_scores or {}).items() if k not in _NON_CONCEPT_CATS]
+    if not tech:
+        return max(0.0, min(1.0, (overall or 0) / 100.0))
+    return max(0.0, min(1.0, (sum(tech) / len(tech)) / 100.0))
+
+
 @app.post("/api/interview/evaluate")
 def interview_evaluate(req: InterviewEvalRequest):
     """Judge a design answer (structured rubric), persist it, update the skill
@@ -1382,8 +1471,9 @@ def interview_evaluate(req: InterviewEvalRequest):
                 )
                 concept_ids = [r["id"] for r in cur.fetchall()]
         # Skill-model update: blend the interview score into topic mastery.
+        concept_score = _concept_evidence_score(ev.get("category_scores"), overall)
         for cid in concept_ids:
-            student.update_mastery(req.student_id, cid, overall / 100.0, 0.4)
+            student.update_mastery(req.student_id, cid, concept_score, 0.4)
         # Record detected misconceptions as durable, evidence-tagged notes.
         for m in (ev.get("misconceptions") or [])[:5]:
             desc = (m.get("description") or "").strip()
@@ -1494,8 +1584,9 @@ def debug_evaluate(req: DebugEvalRequest):
                     (req.topic_id,),
                 )
                 concept_ids = [r["id"] for r in cur.fetchall()]
+        concept_score = _concept_evidence_score(ev.get("category_scores"), overall)
         for cid in concept_ids:
-            student.update_mastery(req.student_id, cid, overall / 100.0, 0.4)
+            student.update_mastery(req.student_id, cid, concept_score, 0.4)
         for m in (ev.get("misconceptions") or [])[:5]:
             desc = (m.get("description") or "").strip()
             if desc:
@@ -1589,8 +1680,9 @@ def forward_evaluate(req: ForwardEvalRequest):
                     (req.topic_id,),
                 )
                 concept_ids = [r["id"] for r in cur.fetchall()]
+        concept_score = _concept_evidence_score(ev.get("category_scores"), overall)
         for cid in concept_ids:
-            student.update_mastery(req.student_id, cid, overall / 100.0, 0.4)
+            student.update_mastery(req.student_id, cid, concept_score, 0.4)
         for m in (ev.get("misconceptions") or [])[:5]:
             desc = (m.get("description") or "").strip()
             if desc:

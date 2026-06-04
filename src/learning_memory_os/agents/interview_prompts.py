@@ -113,6 +113,18 @@ GPUs" before identifying the bottleneck.
 Communication is a MULTIPLIER, not a driver: a great answer must be explainable, but polished \
 prose cannot rescue weak technical reasoning. Score communication accordingly.
 
+Calibrate the `overall_score` the way a real interviewer judges ONE response — by the quality \
+of what they actually reasoned, NOT by how many of the 10 categories they happened to touch. A \
+focused, correct answer that simply doesn't cover every dimension is still a strong answer:
+- 85-100: unusually complete, staff-level — quantitative reasoning + tradeoffs + failure modes.
+- 75-84 : strong; correct quantitative reasoning and clear tradeoffs, minor gaps.
+- 65-74 : good answer that would survive follow-ups; right instincts, some depth missing.
+- 55-64 : strong but partial — correct core (e.g. right bottleneck + rough math) missing dimensions.
+- 40-54 : partial; notable gaps or one real error.
+- below 40: mostly buzzwords, misses the main bottleneck, or makes a dangerous claim.
+A correct, well-reasoned answer that doesn't enumerate every possible dimension should NOT score \
+below 55. Reserve sub-40 for genuinely weak answers.
+
 Then write an `improved_answer`: a crisp, senior-level model answer (what a strong candidate \
 would have said), so the student can see the gap.
 
