@@ -1411,6 +1411,7 @@ async function submitAuth(e) {
 }
 function onLoggedIn(username) {
   state.studentId = username;
+  setTimeout(checkOnboarding, 300);
   const tag = $("authUserTag"); if (tag) tag.textContent = username;
   $("authGate").classList.add("hidden");
   renderStreak();
@@ -1432,6 +1433,8 @@ async function bootApp() {
   }
   await maybeShowWelcomeBack();
   routeFromHash();   // default #/home
+  $("obSave")?.addEventListener("click", saveOnboarding);
+  checkOnboarding();
 }
 
 // ── Interview Readiness view (B2C wedge) ───────────────────────
@@ -1478,6 +1481,7 @@ async function renderReadiness() {
           <div style="font-family:var(--font-display);font-weight:600;font-size:16px">🔒 Unlock your full gap analysis + drill plan</div>
           <div class="tile-sub" style="margin:4px 0 12px">See all <b>${more}</b> remaining gaps across the curriculum, a prioritized study plan, and your readiness trend over time.</div>
           <button class="btn btn-primary upgrade-btn" data-src="readiness_gaps">Get Pro — see your full report →</button>
+          <div class="tile-sub" style="margin-top:8px">Plans: Free · <b>Pro</b> · Interview Bootcamp · Premium Human+AI</div>
         </div>
       </div>`;
   }
@@ -1625,6 +1629,31 @@ function ivReport(ev) {
     </div>
     <div class="card" style="margin-top:8px"><div class="tile-kicker" style="margin-bottom:8px">⚠ Detected misconceptions</div><div class="timeline">${list(ev.misconceptions, "⚠")}</div></div>
     <details class="card" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">📝 See a senior-level model answer</summary><div class="prose-chat" style="margin-top:10px">${renderMarkdown(ev.improved_answer || "")}</div></details>`;
+}
+
+// ── Onboarding intake ──────────────────────────────────────────
+async function checkOnboarding() {
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/onboarding`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.onboarding || !d.onboarding.goal) {
+      $("onboardModal")?.classList.remove("hidden");
+    }
+  } catch (_) {}
+}
+async function saveOnboarding() {
+  const body = {
+    goal: $("obGoal").value, level: $("obLevel").value,
+    target: $("obTarget").value || null, learning_style: $("obStyle").value,
+  };
+  try {
+    await fetch(`/api/student/${encodeURIComponent(state.studentId)}/onboarding`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+  } catch (_) {}
+  $("onboardModal")?.classList.add("hidden");
+  if (typeof toast === "function") toast(`✨ <span class="t-grad">Training tailored to you.</span>`);
 }
 
 // ── Init ───────────────────────────────────────────────────────

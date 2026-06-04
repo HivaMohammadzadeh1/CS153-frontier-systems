@@ -88,7 +88,7 @@ def _settings():
 
 # ---- Auth gating ----
 # Public API paths that never require a session; everything else under /api/ does.
-_PUBLIC_API = ("/api/health", "/api/topics", "/api/info", "/api/routers", "/api/auth/", "/api/billing/webhook")
+_PUBLIC_API = ("/api/health", "/api/topics", "/api/info", "/api/routers", "/api/auth/", "/api/billing/webhook", "/api/pricing")
 _STUDENT_PATH_RE = re.compile(r"^/api/student/([^/]+)")
 
 
@@ -1717,6 +1717,64 @@ def delete_conversation(conversation_id: str, request: Request):
         return {"ok": True}
     finally:
         conn.close()
+
+
+# ── Onboarding intake (goal / level / target / learning style) ────────────────
+class OnboardingRequest(BaseModel):
+    goal: Optional[str] = None
+    level: Optional[str] = None
+    target: Optional[str] = None
+    learning_style: Optional[str] = None
+
+
+@app.get("/api/student/{student_id}/onboarding")
+def get_onboarding(student_id: str):
+    conn = connect(_settings().database_url)
+    try:
+        StudentStore(conn).ensure_student(student_id)
+        with conn.cursor() as cur:
+            cur.execute("SELECT profile FROM students WHERE id = %s", (student_id,))
+            row = cur.fetchone()
+        prof = (row["profile"] if row else {}) or {}
+        return {"onboarding": prof.get("onboarding") or {}}
+    finally:
+        conn.close()
+
+
+@app.post("/api/student/{student_id}/onboarding")
+def set_onboarding(student_id: str, req: OnboardingRequest):
+    data = {k: v for k, v in {
+        "goal": req.goal, "level": req.level, "target": req.target,
+        "learning_style": req.learning_style,
+    }.items() if v}
+    conn = connect(_settings().database_url)
+    try:
+        StudentStore(conn).ensure_student(student_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE students SET profile = COALESCE(profile, '{}'::jsonb) "
+                "|| jsonb_build_object('onboarding', %s::jsonb) WHERE id = %s",
+                (json.dumps(data), student_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "onboarding": data}
+
+
+# ── Pricing tiers (placeholder; payments via /api/billing) ────────────────────
+@app.get("/api/pricing")
+def pricing():
+    return {"tiers": [
+        {"id": "free", "name": "Free", "price": "$0",
+         "features": ["Readiness score + 1 gap", "Limited mock interviews", "Concept chat"]},
+        {"id": "pro", "name": "Pro", "price": "$29/mo",
+         "features": ["Full gap analysis + drill plan", "Unlimited mock interviews & debugging", "Readiness trend over time", "Adaptive curriculum"]},
+        {"id": "bootcamp", "name": "Interview Bootcamp", "price": "$199",
+         "features": ["Everything in Pro", "Targeted FAANG/infra interview track", "Daily drills + weekly mock loop", "Company-specific prep"]},
+        {"id": "premium", "name": "Premium Human + AI", "price": "Contact",
+         "features": ["Everything in Bootcamp", "Human staff-engineer review", "1:1 mock interviews", "Offer-negotiation guidance"]},
+    ]}
 
 
 # Mount static frontend last so /api routes take precedence

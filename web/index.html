@@ -176,6 +176,33 @@
     </div>
   </div>
 
+
+  <!-- Onboarding intake -->
+  <div id="onboardModal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-head"><h2 class="modal-title">Let's tailor your training</h2></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label class="field-label">Your goal</label>
+        <select id="obGoal" class="field-input">
+          <option>ML systems interview prep</option>
+          <option>AI infrastructure engineering</option>
+          <option>Forward deployed AI engineering</option>
+          <option>Course-style learning</option>
+        </select>
+        <label class="field-label">Current level</label>
+        <select id="obLevel" class="field-input"><option>Beginner</option><option selected>Intermediate</option><option>Advanced</option></select>
+        <label class="field-label">Target companies / roles (optional)</label>
+        <input id="obTarget" class="field-input" placeholder="e.g. ML infra @ a frontier lab" />
+        <label class="field-label">Preferred learning style</label>
+        <select id="obStyle" class="field-input">
+          <option>Socratic</option><option>Direct explanation</option><option>Diagram-based</option><option>Production examples</option><option>Interview simulation</option>
+        </select>
+        <button class="btn btn-primary" id="obSave" style="width:100%;margin-top:6px">Start training →</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
