@@ -22,12 +22,18 @@ one-time $5 (becomes `is_pro`) before using anything but the billing routes.
 > No-code alternative: skip the API keys and create a **Payment Link** for the $5
 > product; set `LMOS_CHECKOUT_URL` to it. The webhook still grants access.
 
-## 2. Render
+## 2. Database (free Neon)
+Render allows only one free managed Postgres per account, so the app uses an
+**external** Postgres via `DATABASE_URL`:
+1. **neon.tech** → sign up → **New Project** → copy the **connection string**
+   (`postgresql://…@…neon.tech/…?sslmode=require`).
+
+## 3. Render
 1. Push to GitHub (done).
-2. Render → **New + → Blueprint** → select this repo. It reads `render.yaml`
-   (a Docker web service + a free Postgres). `DATABASE_URL` is wired automatically;
-   migrations run on every boot (idempotent).
+2. Render → **New + → Blueprint** → select this repo (reads `render.yaml`: a Docker
+   web service, no managed DB). Migrations run on every boot (idempotent).
 3. In the service's **Environment** tab, set the `sync: false` vars:
+   - `DATABASE_URL` → your Neon connection string
    - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
    - `APP_BASE_URL` and `LMOS_PUBLIC_URL` → your URL (e.g. `https://memex.onrender.com`)
    - `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`

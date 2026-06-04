@@ -1,6 +1,7 @@
-# Render Blueprint: a Docker web service + a managed Postgres.
+# Render Blueprint: a Docker web service. Uses an EXTERNAL Postgres (set
+# DATABASE_URL in the dashboard) — e.g. a free Neon database — because Render
+# allows only one free managed Postgres per account.
 # Deploy: push to GitHub, then in Render → "New +" → "Blueprint" → pick this repo.
-# Fill the `sync: false` secrets in the Render dashboard after the first deploy.
 services:
   - type: web
     name: memex
@@ -9,10 +10,8 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: memex-db
-          property: connectionString
+      - key: DATABASE_URL          # paste your Postgres URL (e.g. free Neon) here
+        sync: false
       - key: COOKIE_SECURE
         value: "true"            # Render serves HTTPS
       # Secrets — set these in the dashboard (Environment tab):
@@ -30,7 +29,3 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-
-databases:
-  - name: memex-db
-    plan: free          # free Postgres (free for 90 days, then a small monthly fee)
