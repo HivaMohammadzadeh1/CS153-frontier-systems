@@ -202,12 +202,8 @@ def auth_me(request: Request):
     username = _username_from_request(request)
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    conn = connect(_settings().database_url)
-    try:
-        pro = AuthStore(conn).is_pro(username)
-    finally:
-        conn.close()
-    return {"username": username, "is_pro": pro}
+    # Pro is disabled for now — everyone gets full access.
+    return {"username": username, "is_pro": True}
 
 
 # ---- Request/response models ----
@@ -551,9 +547,9 @@ def student_readiness(student_id: str):
         # blocks "ready" no matter how high the average (expert calibration).
         verdict = _readiness_verdict(conn, student_id)
 
-        # Pro gating (server-enforced): free users get overall + areas + ONE gap
-        # teaser; the full gap analysis and over-time trend are the paid product.
-        pro = AuthStore(conn).is_pro(student_id)
+        # Pro is disabled for now — everything is free. (Gating logic kept below so
+        # it can be re-enabled by flipping this back to AuthStore(conn).is_pro(...).)
+        pro = True
         return {
             "overall_readiness": overall,
             "areas": area_readiness,
@@ -946,14 +942,17 @@ def chat_stream(req: ChatRequest, request: Request):
 
 
 class QuizGenRequest(BaseModel):
-    topic_id: str
+    topic_id: Optional[str] = None      # optional: inferred from `question` if absent
     student_id: Optional[str] = None
+    question: Optional[str] = None       # the chat question the student wants tested on
 
 
 class QuizGenResponse(BaseModel):
     question: str
     rubric: str
     difficulty: str = "Easy"
+    topic_id: str = ""                    # the resolved topic (so the client can score)
+    topic_title: str = ""
 
 
 # Adaptive difficulty bands. `lo` is the inclusive lower bound on the blended
@@ -992,15 +991,29 @@ def _quiz_difficulty(mastery_avg, recent_scores) -> tuple[str, str, float]:
 @app.post("/api/quiz/generate", response_model=QuizGenResponse)
 def quiz_generate(req: QuizGenRequest, request: Request):
     req.student_id = request.state.username
-    llm, _ = _llm_and_embedder()
+    llm, embedder = _llm_and_embedder()
+    title_by_id = {t.id: t.title for t in _TOPICS}
     conn = connect(_settings().database_url)
     try:
+        topic_id = req.topic_id
+        # No topic chosen? Infer it from the question the student wants tested on —
+        # they shouldn't have to pick a topic to quiz themselves on what they just asked.
+        if not topic_id and req.question:
+            try:
+                qvec = embedder.embed_one(req.question)
+                hits = SemanticStore(conn).vector_search(query=qvec, k=5)
+                topic_id = next((h.topic_id for h in hits if h.topic_id), None)
+            except Exception:
+                topic_id = None
+        if not topic_id:
+            raise HTTPException(status_code=400, detail="Could not determine a topic — pick one or ask a more specific question.")
+
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT body FROM semantic_items "
                 "WHERE topic_id = %s AND artifact_type IN ('concept','example','paper_claim') "
                 "ORDER BY random() LIMIT 6",
-                (req.topic_id,),
+                (topic_id,),
             )
             excerpt = "\n\n".join(r["body"] for r in cur.fetchall())
 
@@ -1011,7 +1024,7 @@ def quiz_generate(req: QuizGenRequest, request: Request):
                     "SELECT avg(m.score) AS a FROM mastery m "
                     "JOIN semantic_items s ON s.id = m.concept_id "
                     "WHERE m.student_id = %s AND s.topic_id = %s",
-                    (req.student_id, req.topic_id),
+                    (req.student_id, topic_id),
                 )
                 row = cur.fetchone()
                 mastery_avg = row["a"] if row and row["a"] is not None else None
@@ -1021,29 +1034,47 @@ def quiz_generate(req: QuizGenRequest, request: Request):
                     "WHERE student_id = %s AND event_type = 'quiz_attempt' "
                     "  AND payload->>'topic_id' = %s AND payload ? 'score' "
                     "ORDER BY occurred_at DESC LIMIT 3",
-                    (req.student_id, req.topic_id),
+                    (req.student_id, topic_id),
                 )
                 recent_scores = [r["sc"] for r in cur.fetchall() if r["sc"] is not None]
+
+        # What the student already knows / gets wrong on this topic — so the quiz
+        # targets their actual gaps instead of asking something generic.
+        misc_lines = []
+        if req.student_id:
+            for m in StudentStore(conn).active_misconceptions(req.student_id):
+                if m.get("topic_id") == topic_id and m.get("description"):
+                    misc_lines.append(m["description"])
     finally:
         conn.close()
     if not excerpt:
-        raise HTTPException(status_code=400, detail=f"No material for topic '{req.topic_id}'")
+        raise HTTPException(status_code=400, detail=f"No material for topic '{topic_id}'")
 
     label, guidance, _eff = _quiz_difficulty(mastery_avg, recent_scores)
+    topic_title = title_by_id.get(topic_id, topic_id)
+    know = ("the student is new to this topic" if mastery_avg is None
+            else f"the student's current mastery here is ~{round(float(mastery_avg) * 100)}%")
+    misc_block = ("\n\nThe student has shown these MISCONCEPTIONS on this topic — "
+                  "prefer a question that probes or corrects one of them:\n- "
+                  + "\n- ".join(misc_lines[:3])) if misc_lines else ""
+    relevance = (f"\n\nThe student just asked: \"{req.question.strip()[:300]}\". Make the quiz "
+                 "question directly relevant to what they were exploring." if req.question else "")
     data = llm.complete_with_schema(
         system=(
             "Generate ONE quiz question on the given ML systems engineering topic, "
             "calibrated to the student's current level. Keep it focused and clearly "
             "worded; prefer testing understanding over trickiness. The rubric should "
             "list the key points a correct answer must cover.\n\n"
-            f"DIFFICULTY — {label}: {guidance}"
+            f"DIFFICULTY — {label}: {guidance}\n\n"
+            f"Personalize: {know}.{misc_block}{relevance}"
         ),
-        user=f"TOPIC: {req.topic_id}\n\nMATERIAL EXCERPT:\n{excerpt[:3000]}",
+        user=f"TOPIC: {topic_title}\n\nMATERIAL EXCERPT:\n{excerpt[:3000]}",
         schema=QUIZ_QUESTION_SCHEMA,
         tool_name="submit_quiz_question",
         tool_description="Submit the generated quiz question and rubric.",
     )
-    return QuizGenResponse(question=data["question"], rubric=data["rubric"], difficulty=label)
+    return QuizGenResponse(question=data["question"], rubric=data["rubric"], difficulty=label,
+                           topic_id=topic_id, topic_title=topic_title)
 
 
 class QuizScoreRequest(BaseModel):
@@ -1135,10 +1166,11 @@ def interview_question(req: InterviewQuestionRequest):
     llm, _ = _llm_and_embedder()
     title_by_id = {t.id: t.title for t in _TOPICS}
     topic_id = req.topic_id
-    if not topic_id:
-        conn = connect(_settings().database_url)
-        try:
-            with conn.cursor() as cur:
+    known: Optional[str] = None
+    conn = connect(_settings().database_url)
+    try:
+        with conn.cursor() as cur:
+            if not topic_id:
                 cur.execute(
                     "SELECT s.topic_id AS t, avg(m.score) AS a FROM mastery m "
                     "JOIN semantic_items s ON s.id = m.concept_id "
@@ -1147,10 +1179,29 @@ def interview_question(req: InterviewQuestionRequest):
                 )
                 row = cur.fetchone()
                 topic_id = row["t"] if row else (_TOPICS[0].id if _TOPICS else None)
-        finally:
-            conn.close()
+            # what the student already knows on this topic (mastery + misconceptions)
+            mastery_avg = None
+            if topic_id:
+                cur.execute(
+                    "SELECT avg(m.score) AS a FROM mastery m JOIN semantic_items s ON s.id = m.concept_id "
+                    "WHERE m.student_id = %s AND s.topic_id = %s",
+                    (req.student_id, topic_id),
+                )
+                row = cur.fetchone()
+                mastery_avg = row["a"] if row and row["a"] is not None else None
+        misc = [m["description"] for m in StudentStore(conn).active_misconceptions(req.student_id)
+                if m.get("topic_id") == topic_id and m.get("description")][:3]
+    finally:
+        conn.close()
+    if mastery_avg is not None or misc:
+        parts = []
+        if mastery_avg is not None:
+            parts.append(f"current mastery ~{round(float(mastery_avg) * 100)}%")
+        if misc:
+            parts.append("known misconceptions: " + "; ".join(misc))
+        known = "; ".join(parts)
     topic_title = title_by_id.get(topic_id, topic_id or "ML systems")
-    q = InterviewAgent(llm).generate_question(topic_title=topic_title, level=req.level, goal=req.goal)
+    q = InterviewAgent(llm).generate_question(topic_title=topic_title, level=req.level, goal=req.goal, known=known)
     return {"topic_id": topic_id, "topic_title": topic_title, "level": req.level, "question": q}
 
 
@@ -1181,10 +1232,13 @@ def interview_evaluate(req: InterviewEvalRequest):
         student = StudentStore(conn)
         student.ensure_student(req.student_id)
         style = build_profile(conn, req.student_id).learning_style or None
-        ev = InterviewAgent(llm).evaluate(
-            question=req.question, answer=req.answer, topic_title=topic_title,
-            level=req.level, profile_summary=style, transcript=req.transcript,
-        )
+        try:
+            ev = InterviewAgent(llm).evaluate(
+                question=req.question, answer=req.answer, topic_title=topic_title,
+                level=req.level, profile_summary=style, transcript=req.transcript,
+            )
+        except ValueError:
+            raise HTTPException(status_code=502, detail="The AI judge did not return an evaluation. Please try again.")
         overall = int(ev.get("overall_score") or 0)
         # Persist the conversation: for a multi-turn interview store the flattened
         # transcript so the readiness verdict + history reflect the full exchange.
@@ -1299,10 +1353,13 @@ def debug_evaluate(req: DebugEvalRequest):
         student = StudentStore(conn)
         student.ensure_student(req.student_id)
         style = build_profile(conn, req.student_id).learning_style or None
-        ev = DebuggingAgent(llm).evaluate(
-            incident=req.incident, diagnosis=req.diagnosis, topic_title=topic_title,
-            level=req.level, profile_summary=style,
-        )
+        try:
+            ev = DebuggingAgent(llm).evaluate(
+                incident=req.incident, diagnosis=req.diagnosis, topic_title=topic_title,
+                level=req.level, profile_summary=style,
+            )
+        except ValueError:
+            raise HTTPException(status_code=502, detail="The AI judge did not return an evaluation. Please try again.")
         ev["kind"] = "debug"
         overall = int(ev.get("overall_score") or 0)
         with conn.cursor() as cur:
@@ -1391,10 +1448,13 @@ def forward_evaluate(req: ForwardEvalRequest):
         student = StudentStore(conn)
         student.ensure_student(req.student_id)
         style = build_profile(conn, req.student_id).learning_style or None
-        ev = ForwardDeployedAgent(llm).evaluate(
-            scenario=req.scenario, response=req.response, topic_title=topic_title,
-            level=req.level, profile_summary=style,
-        )
+        try:
+            ev = ForwardDeployedAgent(llm).evaluate(
+                scenario=req.scenario, response=req.response, topic_title=topic_title,
+                level=req.level, profile_summary=style,
+            )
+        except ValueError:
+            raise HTTPException(status_code=502, detail="The AI judge did not return an evaluation. Please try again.")
         ev["kind"] = "forward"
         overall = int(ev.get("overall_score") or 0)
         with conn.cursor() as cur:

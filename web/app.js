@@ -1218,14 +1218,19 @@ function closeRoutingModal() { $("routingModal").classList.add("hidden"); }
 // ── Quiz ───────────────────────────────────────────────────────
 async function triggerQuiz(row, msgIdx) {
   const topicId = state.topicId || $("topicSelect").value || null;
-  if (!topicId) { alert("Select a topic first to generate a quiz."); return; }
+  // No topic picked? Infer it from the question that prompted this answer — the
+  // student shouldn't have to choose a topic to test themselves on what they asked.
+  let qText = null;
+  for (let i = Math.min(msgIdx, state.messages.length - 1); i >= 0; i--) {
+    if (state.messages[i] && state.messages[i].role === "user") { qText = state.messages[i].content; break; }
+  }
   const area = row.querySelector(".quiz-area");
   area.innerHTML = `<div class="quiz-card"><div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)"><div class="thinking-dots"><span></span><span></span><span></span></div> Generating question…</div></div>`;
   try {
-    const res = await fetch("/api/quiz/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic_id: topicId, student_id: state.studentId }) });
+    const res = await fetch("/api/quiz/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topic_id: topicId, student_id: state.studentId, question: qText }) });
     if (!res.ok) throw new Error(await res.text());
-    const { question, rubric, difficulty } = await res.json();
-    renderQuizQuestion(area, msgIdx, question, rubric, topicId, difficulty);
+    const { question, rubric, difficulty, topic_id } = await res.json();
+    renderQuizQuestion(area, msgIdx, question, rubric, topic_id || topicId, difficulty);
   } catch (err) { area.innerHTML = `<p style="font-size:12px;color:var(--bad);margin-top:4px">Quiz error: ${esc(err.message)}</p>`; }
 }
 const DIFF_STYLE = {
@@ -1751,7 +1756,7 @@ function ivReport(ev) {
       <div class="card"><div class="tile-kicker" style="margin-bottom:8px">🎯 Weaknesses</div><div class="timeline">${list(ev.weaknesses, "•")}</div></div>
     </div>
     <div class="card" style="margin-top:8px"><div class="tile-kicker" style="margin-bottom:8px">⚠ Detected misconceptions</div><div class="timeline">${list(ev.misconceptions, "⚠")}</div></div>
-    <details class="card" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">📝 See a senior-level model answer</summary><div class="prose-chat" style="margin-top:10px">${renderMarkdown(ev.improved_answer || "")}</div></details>`;
+    <details class="card" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">📝 See a senior-level model answer</summary><div class="prose-chat" style="margin-top:10px">${(ev.improved_answer || "").trim() ? renderMarkdown(ev.improved_answer) : '<p class="view-subtitle" style="margin:0">The judge didn\'t return a model answer this time — regenerate to see one.</p>'}</div></details>`;
 }
 
 // ── Onboarding intake ──────────────────────────────────────────

@@ -39,7 +39,7 @@ The core research question: *can a small model match a frontier oracle at **cont
 
 ### [2] Application / Product
 - **Backend:** FastAPI (`src/learning_memory_os/api.py`) over Postgres + **pgvector**; four-tier memory (semantic / student-mastery / episodic / intervention) plus an XTrace tier.
-- **Frontend:** a no-build SPA (`web/`) — Home, **Interview Readiness**, Profile, Chat, Progress, Path, Your AI. Auth (sessions), and **Stripe billing** (`src/learning_memory_os/billing.py`) gating the Pro readiness report server-side.
+- **Frontend:** a no-build SPA (`web/`) — Home, **Interview Readiness**, **Mock Interview**, Profile, Chat, Progress, Path, Your AI. Auth (sessions). A server-side entitlement layer + **Stripe billing** (`src/learning_memory_os/billing.py`) exists for a Pro tier, but **all features are free for now** (the gating is flipped off in `api.py`).
 - **Deployment:** self-host the trained router via **DigitalOcean GPU Droplet + vLLM** (`deploy/digitalocean/`) or Modal; the product can call it as a remote OpenAI-compatible endpoint.
 
 ### [3] Agent / automation

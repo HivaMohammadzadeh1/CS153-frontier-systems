@@ -23,6 +23,15 @@ def _format_transcript(transcript: list[dict]) -> str:
     return "\n\n———\n\n".join(out)
 
 
+def _require_eval(ev: dict) -> dict:
+    """Guard against a degenerate judge response (model returned without calling the
+    tool). Persisting such an eval would write a bogus 0-score interview into the
+    readiness history and mastery, so we reject it and let the caller retry."""
+    if not ev or not isinstance(ev, dict) or not ev.get("category_scores"):
+        raise ValueError("judge returned no structured evaluation")
+    return ev
+
+
 def _normalize(ev: dict, categories: list[str]) -> dict:
     ev.setdefault("category_scores", {})
     for c in categories:
@@ -41,11 +50,15 @@ class InterviewAgent:
         self.llm = llm
 
     def generate_question(self, *, topic_title: str, level: str = "intermediate",
-                          goal: str | None = None) -> str:
+                          goal: str | None = None, known: str | None = None) -> str:
         goal_line = f"\nCandidate goal: {goal}." if goal else ""
+        # Condition on what the student already knows / gets wrong so the question
+        # targets their actual gaps rather than asking something generic.
+        known_line = (f"\nWhat this candidate already knows / struggles with on this topic: {known}. "
+                      "Aim the question at their weak edge — don't re-test what they've mastered.") if known else ""
         user = (
             f"Topic to probe: {topic_title}\n"
-            f"Candidate level: {level}.{goal_line}\n\n"
+            f"Candidate level: {level}.{goal_line}{known_line}\n\n"
             "Write the interview question now."
         )
         return self.llm.complete(system=INTERVIEWER_SYSTEM, user=user, max_tokens=400).strip()
@@ -82,9 +95,9 @@ class InterviewAgent:
             system=JUDGE_SYSTEM, user=user, schema=EVALUATION_SCHEMA,
             tool_name="submit_evaluation",
             tool_description="Submit the structured ML-systems interview evaluation.",
-            max_tokens=2048,
+            max_tokens=4096,
         )
-        ev = _normalize(ev, CATEGORIES)
+        ev = _normalize(_require_eval(ev), CATEGORIES)
         # Override the LLM's holistic number with the staff-interviewer weighted sum
         # (fixes over-weighting communication).
         ev["overall_score"] = weighted_overall(ev["category_scores"], role)
@@ -115,9 +128,9 @@ class DebuggingAgent:
             system=DEBUG_JUDGE_SYSTEM, user=user, schema=DEBUG_EVAL_SCHEMA,
             tool_name="submit_evaluation",
             tool_description="Submit the structured debugging-process evaluation.",
-            max_tokens=2048,
+            max_tokens=4096,
         )
-        return _normalize(ev, DEBUG_CATEGORIES)
+        return _normalize(_require_eval(ev), DEBUG_CATEGORIES)
 
 
 class ForwardDeployedAgent:
@@ -146,6 +159,6 @@ class ForwardDeployedAgent:
             system=FORWARD_JUDGE_SYSTEM, user=user, schema=FORWARD_EVAL_SCHEMA,
             tool_name="submit_evaluation",
             tool_description="Submit the structured forward-deployed evaluation.",
-            max_tokens=2048,
+            max_tokens=4096,
         )
-        return _normalize(ev, FORWARD_CATEGORIES)
+        return _normalize(_require_eval(ev), FORWARD_CATEGORIES)
