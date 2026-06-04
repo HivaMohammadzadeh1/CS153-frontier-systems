@@ -626,6 +626,36 @@ def student_interviews(student_id: str):
     return {"interviews": out, "count": len(out), "avg_score": avg}
 
 
+@app.get("/api/student/{student_id}/interviews/{eval_id}")
+def student_interview_detail(student_id: str, eval_id: str):
+    """Full stored evaluation for a single past session, so the student can reopen
+    and review any interview/debug/forward report they've done."""
+    title_by_id = {t.id: t.title for t in _TOPICS}
+    conn = connect(_settings().database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id::text, topic_id, level, question, answer, overall_score, "
+                "       evaluation, to_char(occurred_at,'YYYY-MM-DD\"T\"HH24:MI:SS') AS ts "
+                "FROM interview_evaluations WHERE id = %s AND student_id = %s",
+                (eval_id, student_id),
+            )
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    ev = r["evaluation"] if isinstance(r["evaluation"], dict) else {}
+    return {
+        "id": r["id"], "topic_id": r["topic_id"],
+        "topic_title": title_by_id.get(r["topic_id"], r["topic_id"] or "ML systems"),
+        "level": r["level"], "kind": ev.get("kind", "interview"),
+        "question": r["question"], "answer": r["answer"],
+        "overall_score": r["overall_score"], "occurred_at": r["ts"],
+        "evaluation": ev,
+    }
+
+
 @app.get("/api/student/{student_id}/state")
 def student_state(student_id: str):
     conn = connect(_settings().database_url)

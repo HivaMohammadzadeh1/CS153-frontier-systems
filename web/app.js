@@ -1710,11 +1710,11 @@ async function ivLoadHistory() {
     const when = (iv.occurred_at || "").slice(0, 10);
     const turns = iv.turns ? ` · ${iv.turns} turns` : "";
     const weak = iv.weakest ? ` · weakest: ${esc(iv.weakest.replace(/_/g, " "))}` : "";
-    return `<div class="tl-item">
+    return `<div class="tl-item iv-past" data-iv-id="${esc(iv.id)}" style="cursor:pointer">
         <div class="tl-ico">${k.icon}</div>
         <div class="tl-body">
           <div class="tl-label">${esc(k.label)} · ${esc(iv.topic_title)}</div>
-          <div class="tl-meta">${when} · ${esc(iv.level || "")}${turns}${weak}</div>
+          <div class="tl-meta">${when} · ${esc(iv.level || "")}${turns}${weak} · <span style="color:var(--accent)">view report →</span></div>
         </div>
         <span class="verdict-score ${col}" style="font-size:22px;min-width:auto">${sc}</span>
       </div>`;
@@ -1723,6 +1723,46 @@ async function ivLoadHistory() {
     ? `<span class="tile-sub">${d.count} session${d.count === 1 ? "" : "s"} · avg <b>${d.avg_score}</b>/100</span>` : "";
   host.innerHTML = `<div class="section-label">Past interviews</div>
     <div class="card"><div style="margin-bottom:8px">${avg}</div><div class="timeline">${rows}</div></div>`;
+  host.querySelectorAll(".iv-past").forEach((el) => el.addEventListener("click", () => ivViewPast(el.dataset.ivId)));
+}
+
+// Reopen a past session's full report (clicked from the history list).
+async function ivViewPast(id) {
+  const body = $("ivBody");
+  body.innerHTML = `<div class="card"><span class="thinking-dots"><span></span><span></span><span></span></span> Loading report…</div>`;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  let d;
+  try {
+    const r = await fetch(`/api/student/${encodeURIComponent(state.studentId)}/interviews/${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error("http " + r.status);
+    d = await r.json();
+  } catch (_) { body.innerHTML = `<p class="view-subtitle">Could not load that interview.</p>`; return; }
+  const ev = d.evaluation || {};
+  _ivTopic = d.topic_id;   // so "Drill the gap →" works from a past report
+  const k = IV_KIND_META[d.kind] || IV_KIND_META.interview;
+  const when = (d.occurred_at || "").slice(0, 10);
+  const qLabel = d.kind === "debug" ? "Incident" : d.kind === "forward" ? "Customer scenario" : "Question(s)";
+  const aLabel = d.kind === "debug" ? "Your diagnosis" : d.kind === "forward" ? "Your handling" : "Your answer(s)";
+  body.innerHTML = `
+    <div class="card" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:22px">${k.icon}</span>
+        <div><div style="font-family:var(--font-display);font-weight:600;font-size:17px">${esc(k.label)} · ${esc(d.topic_title)}</div>
+        <div class="tile-sub">${when} · ${esc(d.level || "")}</div></div>
+        <button class="btn btn-ghost btn-sm" id="ivBackToSetup" style="margin-left:auto">← Back</button>
+      </div>
+      <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">${qLabel} & your response</summary>
+        <div class="prose-chat" style="margin-top:10px"><b>${qLabel}:</b>${renderMarkdown(d.question || "")}</div>
+        <div class="prose-chat" style="margin-top:8px"><b>${aLabel}:</b>${renderMarkdown(d.answer || "")}</div>
+      </details>
+    </div>
+    <div id="ivPastReport"></div>`;
+  const rep = $("ivPastReport");
+  rep.innerHTML = ivReport(ev);
+  rep.querySelectorAll(".bar > i[data-w]").forEach((i) => { i.style.width = i.dataset.w + "%"; });
+  rep.querySelector(".iv-next")?.addEventListener("click", () => { if (_ivTopic) seedChat(_ivTopic); });
+  $("ivBackToSetup").addEventListener("click", () => { body.innerHTML = ""; });
+  runMermaid(rep);
 }
 
 async function ivGenerate() {
