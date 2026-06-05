@@ -65,3 +65,29 @@ def test_forward_deployed_normalizes_seven_subskills():
     for c in FORWARD_CATEGORIES:
         assert c in ev["category_scores"]
     assert "p99" in llm.last_user
+
+
+def test_forward_respond_conditions_on_transcript_and_message():
+    llm = _FakeLLM(text_return="p99 TTFT is 9s on long chats.")
+    reply = ForwardDeployedAgent(llm).respond(
+        scenario="agent feels slow", topic_title="Latency",
+        transcript=[{"student": "is it TTFT or decode?", "customer": "not sure"}],
+        message="give me p50/p99 TTFT",
+    )
+    assert reply == "p99 TTFT is 9s on long chats."
+    # the customer-sim prompt must see both the prior exchange and the new question
+    assert "is it TTFT or decode?" in llm.last_user
+    assert "give me p50/p99 TTFT" in llm.last_user
+
+
+def test_forward_interactive_evaluate_uses_transcript():
+    llm = _FakeLLM(schema_return={"overall_score": 70, "category_scores": {"metric_selection": 85}})
+    ev = ForwardDeployedAgent(llm).evaluate(
+        scenario="agent feels slow", topic_title="Latency",
+        transcript=[{"student": "what are p99 TTFT numbers?", "customer": "9s"}],
+        response="root cause: prefill blowup",
+    )
+    assert "INTERACTIVE" in llm.last_user
+    assert "what are p99 TTFT numbers?" in llm.last_user
+    for c in FORWARD_CATEGORIES:
+        assert c in ev["category_scores"]
