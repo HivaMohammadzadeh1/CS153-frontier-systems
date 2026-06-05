@@ -31,6 +31,10 @@ The thing we sell is the **differentiator**: the outcomes-proven readiness repor
 
 ## How it works (the three lenses)
 
+**System at a glance** — every turn flows through a context router (heuristic or our fine-tuned LoRA) into a mastery-aware tutor, while the AI Judge grades interviews into a calibrated hire-bar verdict; all of it reads and writes a four-tier memory and emits training traces.
+
+![System architecture](docs/diagrams/system_architecture.png)
+
 ### [1] Research — a learned context router (oracle distillation)
 The core research question: *can a small model match a frontier oracle at **context selection** — picking which memory items to put in a tutor's context under a token budget?*
 - **Data:** 5,000 routing trajectories (`data/trajectories/val.jsonl`) — `(student_state, task, candidate_pool, budget) → oracle_selection`.
@@ -48,6 +52,18 @@ The core research question: *can a small model match a frontier oracle at **cont
   - **Production debugging** — a realistic incident (simulated logs/metrics) graded on your debugging *process*.
   - **Forward-deployed engineer** — a vague customer complaint ("our agent feels slow") graded on the 7 sub-skills that separate forward-deployed work from pure backend: framing, metric selection, localization, hypothesis iteration, the fix, its cost/SLA tradeoff, and explaining it to a non-expert.
   The overall score is the **staff-interviewer weighted sum** of categories (communication is a 0.02 multiplier, not a driver), feeding the calibrated readiness verdict.
+
+  **The interview engine** — three modes → a staff-engineer judge → per-category scores that are calibrated differently for a single answer vs. a full interview, and that update *concept* mastery only from technical evidence:
+
+  ![Interview engine](docs/diagrams/interview_engine.png)
+
+  **The interactive forward-deployed loop** — the AI customer/system reveals metrics *only* when the engineer asks the right diagnostic question, mirroring real customer engineering:
+
+  ![Interactive forward-deployed loop](docs/diagrams/forward_deployed_loop.png)
+
+  **The readiness verdict** is a calibrated hire-bar profile, not a single number — a difficulty-adjusted blend, two hard gates (load-bearing skills + a required deep-dive), a per-round breakdown, and a "distance to next tier" plan:
+
+  ![Readiness verdict pipeline](docs/diagrams/readiness_verdict.png)
 - **TutorAgent** (`src/learning_memory_os/agents/tutor.py`): mastery-aware prompting (skips mastered topics, targets weak ones, confronts active misconceptions), with a **diagnostic remediation** loop and **adaptive-difficulty** quizzes (difficulty scales with mastery + recent scores).
 - **RoutingEngine** (heuristic, scored on relevance/recency/misconception/prerequisite/reuse) **or** the fine-tuned router, selectable per request.
 - **Trace capture** (`src/learning_memory_os/memory/trace.py`): every turn is logged as a training trajectory for future per-user fine-tuning.
